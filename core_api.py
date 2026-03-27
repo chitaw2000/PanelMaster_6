@@ -47,6 +47,17 @@ def fire_ssh_bg(ip, cmd):
     full_ssh = f'ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {safe_cmd}"'
     subprocess.Popen(full_ssh, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def run_ssh_sync(ip, cmd, timeout=20):
+    if not ip:
+        return False
+    try:
+        safe_cmd = cmd.replace('"', '\\"')
+        full_ssh = f'ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {safe_cmd}"'
+        res = subprocess.run(full_ssh, shell=True, capture_output=True, text=True, timeout=timeout)
+        return res.returncode == 0
+    except Exception:
+        return False
+
 def collect_usage_delta(ip, username, last_raw_bytes):
     if not ip:
         return 0.0, float(last_raw_bytes or 0.0)
@@ -300,10 +311,10 @@ def webhook_switch():
             if nip == new_ip:
                 if proto == 'v2':
                     cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
-                    fire_ssh_bg(nip, cmd_add)
+                    run_ssh_sync(nip, cmd_add)
                 else:
                     cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    fire_ssh_bg(nip, cmd_add)
+                    run_ssh_sync(nip, cmd_add)
             else:
                 cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
                 if proto == 'v2':
