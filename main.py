@@ -883,7 +883,28 @@ def toggle_user(username):
 
 @app.route('/switch_user_node/<username>', methods=['POST'])
 def switch_user_node(username):
-    target_node = request.form.get('target_node', '').strip()
+    target_node_raw = request.form.get('target_node', '').strip()
+    if not target_node_raw:
+        return redirect(request.referrer)
+
+    def _norm(s):
+        return str(s or "").strip().lower()
+
+    # Resolve node by id/name in a tolerant way (case-insensitive, [AUTO] name support).
+    target_node = None
+    raw_n = _norm(target_node_raw)
+    for nid, ndata in get_all_servers().items():
+        nid_n = _norm(nid)
+        name = str(ndata.get('name', '')).strip()
+        name_n = _norm(name)
+        name_no_auto = name
+        if name_no_auto.startswith("[AUTO]"):
+            name_no_auto = name_no_auto.replace("[AUTO]", "", 1).strip()
+        name_no_auto_n = _norm(name_no_auto)
+        if raw_n in {nid_n, name_n, name_no_auto_n}:
+            target_node = nid
+            break
+
     if not target_node:
         return redirect(request.referrer)
 
@@ -905,7 +926,11 @@ def switch_user_node(username):
         group_id = uinfo.get('group')
         if group_id:
             groups = load_auto_groups()
-            if target_node not in groups.get(group_id, {}).get("nodes", {}):
+            g_nodes = groups.get(group_id, {}).get("nodes", {})
+            g_nodes_norm = {str(nid).strip().lower(): nid for nid in g_nodes.keys()}
+            if target_node not in g_nodes:
+                target_node = g_nodes_norm.get(str(target_node).strip().lower(), target_node)
+            if target_node not in g_nodes:
                 return redirect(request.referrer)
 
         new_ip = get_target_ip(target_node)
