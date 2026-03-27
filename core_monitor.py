@@ -50,6 +50,50 @@ def suspend_user_everywhere(username, uinfo):
         full_del = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
         subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def query_ip_user_totals(ip):
+    totals = {}
+    try:
+        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
+        if not res.stdout:
+            return totals
+
+        stats = json.loads(res.stdout).get("stat", [])
+        for s in stats:
+            p = s.get("name", "").split(">>>")
+            val = float(s.get("value", 0) or 0)
+            if len(p) >= 4 and p[0] == "user":
+                uname = p[1]
+                totals[uname] = totals.get(uname, 0.0) + val
+            elif len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
+                uname = str(p[1])[4:]
+                totals[uname] = totals.get(uname, 0.0) + val
+    except Exception:
+        pass
+    return totals
+
+def get_user_monitor_ips(uinfo, groups):
+    ips = []
+    group_id = uinfo.get('group')
+    if group_id:
+        g_nodes = groups.get(group_id, {}).get("nodes", {})
+        for nid in g_nodes:
+            nip = get_target_ip(nid)
+            if nip:
+                ips.append(str(nip).strip())
+    else:
+        nip = get_target_ip(uinfo.get('node'))
+        if nip:
+            ips.append(str(nip).strip())
+    # Keep unique order
+    seen = set()
+    out = []
+    for ip in ips:
+        if ip and ip not in seen:
+            seen.add(ip)
+            out.append(ip)
+    return out
+
 def monitor_traffic():
     while True:
         try:
@@ -66,73 +110,78 @@ def monitor_traffic():
 
             if not db: continue
 
-            # 🚀 ညိုကီ့ Logic အတိုင်း: Active ဖြစ်နေသော (User သုံးနေသော) Node များကိုသာ ယူမည်
-            users_by_ip = {}
+            groups = load_auto_groups()
+
+            # Pre-provision mode support:
+            # build monitored IP list per user (group users => all group nodes).
+            user_ips_map = {}
+            all_ips = set()
             for uname, uinfo in db.items():
-                if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False): continue
-                nip = get_target_ip(uinfo.get('node'))
-                if nip:
-                    nip = str(nip).strip()
-                    if nip not in users_by_ip: users_by_ip[nip] = []
-                    users_by_ip[nip].append((uname, uinfo))
+                if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False):
+                    continue
+                ips = get_user_monitor_ips(uinfo, groups)
+                if ips:
+                    user_ips_map[uname] = ips
+                    all_ips.update(ips)
 
             db_changed = False
             current_date = datetime.now().strftime("%Y-%m-%d")
 
-            # 🚀 အရင်က အလုပ်လုပ်ခဲ့သော ရိုးရှင်းသည့် Data ဆွဲနည်းဖြင့် ပြန်ဆွဲမည်
-            for ip, user_list in users_by_ip.items():
-                try:
-                    cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
-                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
-                    
-                    if not res.stdout:
-                        continue 
+            # Query each IP once.
+            ip_totals_map = {}
+            for ip in all_ips:
+                ip_totals_map[ip] = query_ip_user_totals(ip)
 
-                    stats = json.loads(res.stdout).get("stat", [])
-                    stat_dict = {}
-                    
-                    for s in stats:
-                        p = s.get("name", "").split(">>>")
-                        # Prefer per-user stats when available.
-                        if len(p) >= 4 and p[0] == "user":
-                            uname = p[1]
-                            stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
+            # Update each user by summing diffs across monitored nodes.
+            for uname, uinfo in db.items():
+                if uname not in user_ips_map or not isinstance(uinfo, dict) or uinfo.get('is_blocked', False):
+                    continue
 
-                        # Fallback for Shadowsocks nodes created by install script:
-                        # inbound>>>out-<username>>>traffic>>>uplink/downlink
-                        if len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
-                            uname = str(p[1])[4:]
-                            stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
+                last_map = uinfo.get('last_raw_bytes_map')
+                if not isinstance(last_map, dict):
+                    last_map = {}
 
-                    for uname, uinfo in user_list:
-                        current_val = stat_dict.get(uname, 0.0)
-                        last_val = float(uinfo.get('last_raw_bytes', 0.0))
+                total_diff = 0.0
+                current_total = 0.0
 
-                        diff = 0.0
-                        if current_val > last_val:
-                            diff = current_val - last_val
-                        elif current_val < last_val and current_val > 0:
-                            diff = current_val 
+                for ip in user_ips_map[uname]:
+                    current_val = float(ip_totals_map.get(ip, {}).get(uname, 0.0))
+                    last_val = float(last_map.get(ip, 0.0) or 0.0)
 
-                        if diff > 0:
-                            uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + diff
-                            db_changed = True
+                    diff = 0.0
+                    if current_val > last_val:
+                        diff = current_val - last_val
+                    elif current_val < last_val and current_val > 0:
+                        # xray reset/restart case on this node
+                        diff = current_val
 
-                        if uinfo.get('last_raw_bytes') != current_val:
-                            uinfo['last_raw_bytes'] = current_val
-                            db_changed = True
+                    if diff > 0:
+                        total_diff += diff
 
-                        limit_bytes = float(uinfo.get('total_gb', 0)) * (1024**3)
-                        is_over_limit = limit_bytes > 0 and float(uinfo.get('used_bytes', 0)) >= limit_bytes
-                        is_expired = uinfo.get('expire_date') and current_date > uinfo.get('expire_date')
+                    last_map[ip] = current_val
+                    current_total += current_val
 
-                        if is_over_limit or is_expired:
-                            uinfo['is_blocked'] = True
-                            db_changed = True
-                            threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
+                if total_diff > 0:
+                    uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + total_diff
+                    db_changed = True
 
-                except Exception as inner_e:
-                    pass
+                if uinfo.get('last_raw_bytes_map') != last_map:
+                    uinfo['last_raw_bytes_map'] = last_map
+                    db_changed = True
+
+                # Keep legacy aggregate for backward compatibility.
+                if float(uinfo.get('last_raw_bytes', 0.0) or 0.0) != current_total:
+                    uinfo['last_raw_bytes'] = current_total
+                    db_changed = True
+
+                limit_bytes = float(uinfo.get('total_gb', 0)) * (1024**3)
+                is_over_limit = limit_bytes > 0 and float(uinfo.get('used_bytes', 0)) >= limit_bytes
+                is_expired = uinfo.get('expire_date') and current_date > uinfo.get('expire_date')
+
+                if is_over_limit or is_expired:
+                    uinfo['is_blocked'] = True
+                    db_changed = True
+                    threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
 
             if db_changed:
                 with db_lock:

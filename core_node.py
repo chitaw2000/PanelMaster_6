@@ -39,6 +39,15 @@ def get_robust_ip(node_id):
 def sanitize_usernames(raw_list):
     return [str(u).strip().replace(" ", "_").replace("\r", "").replace("\n", "") for u in raw_list if u]
 
+def get_group_node_ips(group_id):
+    groups = load_auto_groups()
+    ips = []
+    for nid in groups.get(group_id, {}).get("nodes", {}):
+        ip = get_robust_ip(nid)
+        if ip:
+            ips.append(str(ip).strip())
+    return ips
+
 def generate_token():
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(32))
@@ -104,14 +113,12 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
 
         vless_cmds = {}
         ss_cmds = {}
-        max_p_by_node = {} 
-        
+        max_p_global = 10000
         for uinfo in db.values():
             if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
-                nid = uinfo.get('node')
                 try: p = int(uinfo.get('port', 10000))
                 except: p = 10000
-                max_p_by_node[nid] = max(max_p_by_node.get(nid, 10000), p)
+                if p > max_p_global: max_p_global = p
 
         for u in usernames:
             if u in db: continue
@@ -124,8 +131,6 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 if not target_ip: return False, "❌ Error: Node offline!"
 
             target_ip = str(target_ip).strip()
-            max_p = max_p_by_node.get(target_node, 10000)
-
             uid = str(uuid.uuid4()).strip()
             safe_u = urllib.parse.quote(u)
             token = generate_token()
@@ -136,14 +141,19 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 cmd = f"/usr/local/bin/v2ray-node-add-vless {u} {uid}"
                 vless_cmds.setdefault(target_ip, []).append(cmd)
             else:
-                max_p += 1
-                max_p_by_node[target_node] = max_p  
-                port = str(max_p)
+                max_p_global += 1
+                port = str(max_p_global)
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
                 cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-                ss_cmds.setdefault(target_ip, []).append(cmd)
+
+                # Pre-provision for group users: add key to all nodes in group.
+                target_ips = [target_ip]
+                if group_id:
+                    target_ips = get_group_node_ips(group_id) or [target_ip]
+                for ip in target_ips:
+                    ss_cmds.setdefault(str(ip).strip(), []).append(cmd)
             
             db[u] = {
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
@@ -179,6 +189,10 @@ def toggle_key(username):
                 ip = get_robust_ip(user.get('node'))
                 if ip:
                     protocol = user.get('protocol', 'v2')
+                    group_id = user.get('group')
+                    target_ips = [str(ip).strip()]
+                    if protocol == 'out' and group_id:
+                        target_ips = get_group_node_ips(group_id) or target_ips
                     if user['is_blocked']: 
                         user['is_online'] = False
                         cmd = get_safe_delete_cmd(username, protocol, user.get('port', '443'))
@@ -191,7 +205,8 @@ def toggle_key(username):
                     else:
                         prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                        execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
+                        for tip in target_ips:
+                            execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def edit_key(username, total_gb, expire_date):
@@ -213,6 +228,7 @@ def renew_key(username, add_gb, add_days):
                 db[username]['used_bytes'] = 0; db[username]['last_raw_bytes'] = 0; db[username]['is_blocked'] = False; db[username]['is_online'] = False
                 
                 ip = get_robust_ip(db[username].get('node'))
+                group_id = db[username].get('group')
                 if ip:
                     uid = db[username]['uuid']
                     protocol = db[username]['protocol']
@@ -224,7 +240,11 @@ def renew_key(username, add_gb, add_days):
                         cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
                         prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                        execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
+                        target_ips = [str(ip).strip()]
+                        if group_id:
+                            target_ips = get_group_node_ips(group_id) or target_ips
+                        for tip in target_ips:
+                            execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
                     
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
@@ -243,7 +263,12 @@ def delete_key(username):
                     else:
                         prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                        execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
+                        target_ips = [str(ip).strip()]
+                        group_id = info.get('group')
+                        if group_id:
+                            target_ips = get_group_node_ips(group_id) or target_ips
+                        for tip in target_ips:
+                            execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 

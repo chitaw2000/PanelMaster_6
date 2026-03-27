@@ -1001,28 +1001,7 @@ def switch_user_node(username):
         with open(USERS_DB, 'w') as f:
             json.dump(db, f, indent=4)
 
-    if not is_blocked:
-        groups = load_auto_groups()
-        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
-        for nid in g_nodes:
-            nip = get_target_ip(nid)
-            if not nip:
-                continue
-            nip = str(nip).strip()
-            if nip == new_ip:
-                if proto == 'v2':
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
-                    run_ssh_sync(nip, cmd_add)
-                else:
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    run_ssh_sync(nip, cmd_add)
-            else:
-                cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
-                if proto == 'v2':
-                    cmd_full_del = f"{cmd_del} ; systemctl restart xray"
-                else:
-                    cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                execute_ssh_bg(nip, [cmd_full_del])
+    # Pre-provision mode: UI switch တွင် DB/key server သာ ပြောင်းမည် (node sync မလုပ်တော့)
 
     return redirect(request.referrer or url_for('dashboard'))
 
