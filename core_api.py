@@ -16,17 +16,28 @@ api_bp = Blueprint('api_bp', __name__)
 MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 def get_target_ip(node_id):
+    node_key = str(node_id or "").strip()
+    if not node_key:
+        return None
+    node_key_l = node_key.lower()
+
     nodes = get_all_servers()
-    if node_id in nodes and nodes[node_id].get('ip'):
-        return str(nodes[node_id]['ip']).strip()
+    if node_key in nodes and nodes[node_key].get('ip'):
+        return str(nodes[node_key]['ip']).strip()
+    for nid, ninfo in nodes.items():
+        if str(nid).strip().lower() == node_key_l and ninfo.get('ip'):
+            return str(ninfo['ip']).strip()
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f:
             for line in f:
                 line = line.strip()
                 if not line: continue
-                if line.startswith(f"{node_id}|") or line.startswith(f"{node_id} "):
-                    parts = line.replace('|', ' ').split()
-                    return parts[-1]
+                normalized = line.replace('|', ' ').split()
+                if not normalized:
+                    continue
+                nid = str(normalized[0]).strip().lower()
+                if nid == node_key_l and len(normalized) >= 2:
+                    return normalized[-1]
     return None
 
 # 🚀 အရင်က အလုပ်လုပ်ခဲ့သော ရိုးရှင်းသည့် နောက်ကွယ်မှ SSH Run သည့်စနစ် ပြန်သုံးထားသည်
