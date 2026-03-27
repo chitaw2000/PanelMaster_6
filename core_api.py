@@ -7,12 +7,10 @@ from core_auto import load_auto_groups
 from core_engine import get_safe_delete_cmd
 
 try:
-    from config import USERS_DB, NODES_LIST, load_config
+    from config import USERS_DB, NODES_LIST
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
-    def load_config():
-        return {"switch_mode": "single_active"}
 
 api_bp = Blueprint('api_bp', __name__)
 MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
@@ -74,8 +72,6 @@ def collect_usage_delta(ip, username, last_raw_bytes):
         for s in stats:
             p = s.get("name", "").split(">>>")
             if len(p) >= 4 and p[0] == "user" and p[1] == username:
-                current_val += float(s.get("value", 0))
-            elif len(p) >= 4 and p[0] == "inbound" and p[1] == f"out-{username}":
                 current_val += float(s.get("value", 0))
 
         last_val = float(last_raw_bytes or 0.0)
@@ -155,8 +151,6 @@ def api_generate_keys():
 
     from core_auto import find_available_node
     
-    switch_mode = load_config().get("switch_mode", "single_active")
-
     with db_lock:
         if os.path.exists(USERS_DB):
             try:
@@ -188,9 +182,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # Mode-aware provisioning:
-        # - single_active: add on active node, remove from others
-        # - pre_provision: add on all group nodes
+        # Pre-provision mode: group nodes အားလုံးတွင် key တစ်ကြိမ်တည်း add လုပ်ထားမည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -204,17 +196,8 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            if switch_mode == "pre_provision":
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                fire_ssh_bg(nip, cmd_add)
-            else:
-                if nid == target_node:
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    fire_ssh_bg(nip, cmd_add)
-                else:
-                    cmd_del = get_safe_delete_cmd(username, 'out', port)
-                    cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    fire_ssh_bg(nip, cmd_full_del)
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            fire_ssh_bg(nip, cmd_add)
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -231,20 +214,7 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-    # User-facing response: return active key info as primary fields.
-    active_key_data = api_keys_dict.get(target_node, {})
-    return jsonify({
-        "success": True,
-        "key": active_key,
-        "keyData": active_key_data,
-        "activeNode": target_node,
-        "totalGB": total_gb,
-        "token": token,
-        # Legacy field expected by older integrations.
-        "keys": api_keys_dict,
-        # Keep full map for backward compatibility with older integrators.
-        "allKeys": api_keys_dict
-    })
+    return jsonify({"success": True, "keys": api_keys_dict, "token": token})
 
 @api_bp.route('/api/webhook/switch', methods=['POST', 'OPTIONS'])
 def webhook_switch():
@@ -286,8 +256,6 @@ def webhook_switch():
     if not new_ip: return jsonify({"success": False, "error": "Target node offline"}), 500
     new_ip = str(new_ip).strip()
 
-    switch_mode = load_config().get("switch_mode", "single_active")
-
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False, "error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -297,39 +265,7 @@ def webhook_switch():
         uinfo = db[username]
         
         old_node = uinfo.get('node')
-        if old_node == target_node:
-            # single_active mode: even when already connected, reconcile node state
-            # to clean leftovers from previous pre-provision period.
-            if switch_mode != "pre_provision" and not uinfo.get('is_blocked', False):
-                uid = uinfo.get('uuid')
-                port = uinfo.get('port')
-                proto = uinfo.get('protocol', 'out')
-                group_id = uinfo.get('group')
-                active_ip = get_target_ip(target_node)
-                if active_ip:
-                    active_ip = str(active_ip).strip()
-                    groups = load_auto_groups()
-                    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
-                    for nid in g_nodes:
-                        nip = get_target_ip(nid)
-                        if not nip:
-                            continue
-                        nip = str(nip).strip()
-                        if nip == active_ip:
-                            if proto == 'v2':
-                                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
-                                run_ssh_sync(nip, cmd_add)
-                            else:
-                                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                                run_ssh_sync(nip, cmd_add)
-                        else:
-                            cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
-                            if proto == 'v2':
-                                cmd_full_del = f"{cmd_del} ; systemctl restart xray"
-                            else:
-                                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                            fire_ssh_bg(nip, cmd_full_del)
-            return jsonify({"success": True, "message": "Already connected"})
+        if old_node == target_node: return jsonify({"success": True, "message": "Already connected"})
         
         old_ip = get_target_ip(old_node)
         old_ip = str(old_ip).strip() if old_ip else None
@@ -357,36 +293,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # single_active mode only: switch syncs node configs.
-    if switch_mode != "pre_provision" and not is_blocked:
-        groups = load_auto_groups()
-        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
-        target_apply_ok = False
-
-        for nid in g_nodes:
-            nip = get_target_ip(nid)
-            if not nip:
-                continue
-            nip = str(nip).strip()
-
-            if nip == new_ip:
-                if proto == 'v2':
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
-                    target_apply_ok = run_ssh_sync(nip, cmd_add)
-                else:
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    target_apply_ok = run_ssh_sync(nip, cmd_add)
-            else:
-                cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
-                if proto == 'v2':
-                    cmd_full_del = f"{cmd_del} ; systemctl restart xray"
-                else:
-                    cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                run_ssh_sync(nip, cmd_full_del)
-
-        if not target_apply_ok:
-            return jsonify({"success": False, "error": "Target node apply failed"}), 500
-
+    # Pre-provision mode: switch တွင် DB/key server သာ ပြောင်းမည် (node sync မလုပ်တော့)
     return jsonify({"success": True, "message": "Successfully switched and synced GB"})
 
 @api_bp.route('/api/user-action', methods=['POST', 'OPTIONS'])
@@ -423,9 +330,8 @@ def api_user_action():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    switch_mode = load_config().get("switch_mode", "single_active")
     groups = load_auto_groups()
-    if action == "resume" and group_id and switch_mode == "pre_provision":
+    if action == "resume" and group_id:
         g_nodes = groups.get(group_id, {}).get("nodes", {})
     else:
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -440,7 +346,7 @@ def api_user_action():
             cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
             fire_ssh_bg(nip, cmd_full_del)
         elif action == "resume":
-            if group_id and switch_mode == "pre_provision":
+            if group_id:
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
                 fire_ssh_bg(nip, cmd_add)
             elif nip == active_ip:

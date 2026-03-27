@@ -72,10 +72,10 @@ def query_ip_user_totals(ip):
         pass
     return totals
 
-def get_user_monitor_ips(uinfo, groups, switch_mode):
+def get_user_monitor_ips(uinfo, groups):
     ips = []
     group_id = uinfo.get('group')
-    if group_id and switch_mode == "pre_provision":
+    if group_id:
         g_nodes = groups.get(group_id, {}).get("nodes", {})
         for nid in g_nodes:
             nip = get_target_ip(nid)
@@ -110,18 +110,16 @@ def monitor_traffic():
 
             if not db: continue
 
-            switch_mode = config.get("switch_mode", "single_active")
             groups = load_auto_groups()
 
-            # Build monitored IP list per user.
-            # pre_provision: group users => all group nodes
-            # single_active: users => active node only
+            # Pre-provision mode support:
+            # build monitored IP list per user (group users => all group nodes).
             user_ips_map = {}
             all_ips = set()
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False):
                     continue
-                ips = get_user_monitor_ips(uinfo, groups, switch_mode)
+                ips = get_user_monitor_ips(uinfo, groups)
                 if ips:
                     user_ips_map[uname] = ips
                     all_ips.update(ips)
