@@ -1009,6 +1009,7 @@ def switch_user_node(username):
     if switch_mode != "pre_provision" and not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+        target_apply_ok = False
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip:
@@ -1017,17 +1018,20 @@ def switch_user_node(username):
             if nip == new_ip:
                 if proto == 'v2':
                     cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
-                    run_ssh_sync(nip, cmd_add)
+                    target_apply_ok = run_ssh_sync(nip, cmd_add)
                 else:
                     cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    run_ssh_sync(nip, cmd_add)
+                    target_apply_ok = run_ssh_sync(nip, cmd_add)
             else:
                 cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
                 if proto == 'v2':
                     cmd_full_del = f"{cmd_del} ; systemctl restart xray"
                 else:
                     cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                execute_ssh_bg(nip, [cmd_full_del])
+                run_ssh_sync(nip, cmd_full_del)
+
+        if not target_apply_ok:
+            return redirect(request.referrer or url_for('dashboard'))
 
     return redirect(request.referrer or url_for('dashboard'))
 
