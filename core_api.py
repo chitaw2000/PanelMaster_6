@@ -240,6 +240,8 @@ def api_generate_keys():
         "activeNode": target_node,
         "totalGB": total_gb,
         "token": token,
+        # Legacy field expected by older integrations.
+        "keys": api_keys_dict,
         # Keep full map for backward compatibility with older integrators.
         "allKeys": api_keys_dict
     })
@@ -295,7 +297,39 @@ def webhook_switch():
         uinfo = db[username]
         
         old_node = uinfo.get('node')
-        if old_node == target_node: return jsonify({"success": True, "message": "Already connected"})
+        if old_node == target_node:
+            # single_active mode: even when already connected, reconcile node state
+            # to clean leftovers from previous pre-provision period.
+            if switch_mode != "pre_provision" and not uinfo.get('is_blocked', False):
+                uid = uinfo.get('uuid')
+                port = uinfo.get('port')
+                proto = uinfo.get('protocol', 'out')
+                group_id = uinfo.get('group')
+                active_ip = get_target_ip(target_node)
+                if active_ip:
+                    active_ip = str(active_ip).strip()
+                    groups = load_auto_groups()
+                    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+                    for nid in g_nodes:
+                        nip = get_target_ip(nid)
+                        if not nip:
+                            continue
+                        nip = str(nip).strip()
+                        if nip == active_ip:
+                            if proto == 'v2':
+                                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
+                                run_ssh_sync(nip, cmd_add)
+                            else:
+                                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                                run_ssh_sync(nip, cmd_add)
+                        else:
+                            cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+                            if proto == 'v2':
+                                cmd_full_del = f"{cmd_del} ; systemctl restart xray"
+                            else:
+                                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                            fire_ssh_bg(nip, cmd_full_del)
+            return jsonify({"success": True, "message": "Already connected"})
         
         old_ip = get_target_ip(old_node)
         old_ip = str(old_ip).strip() if old_ip else None
