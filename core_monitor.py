@@ -82,9 +82,15 @@ def monitor_traffic():
                     
                     for s in stats:
                         p = s.get("name", "").split(">>>")
-                        # "user>>>username>>>traffic>>>downlink" ကို သေချာစစ်၍ ပေါင်းသည်
+                        # Prefer per-user stats when available.
                         if len(p) >= 4 and p[0] == "user":
                             uname = p[1]
+                            stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
+
+                        # Fallback for Shadowsocks nodes created by install script:
+                        # inbound>>>out-<username>>>traffic>>>uplink/downlink
+                        if len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
+                            uname = str(p[1])[4:]
                             stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
 
                     for uname, uinfo in user_list:

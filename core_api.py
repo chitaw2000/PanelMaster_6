@@ -214,11 +214,24 @@ def webhook_switch():
     if not token or not target_node_raw: 
         return jsonify({"success": False, "error": "Missing token or activeServer"}), 400
 
+    def _norm(s):
+        return str(s or "").strip().lower()
+
     target_node = None
+    raw_n = _norm(target_node_raw)
     nodes = get_all_servers()
     for nid, ndata in nodes.items():
-        if nid == target_node_raw or str(ndata.get('name', '')).strip() == target_node_raw:
-            target_node = nid; break
+        nid_n = _norm(nid)
+        name = str(ndata.get('name', '')).strip()
+        name_n = _norm(name)
+        name_no_auto = name.strip()
+        if name_no_auto.startswith("[AUTO]"):
+            name_no_auto = name_no_auto.replace("[AUTO]", "", 1).strip()
+        name_no_auto_n = _norm(name_no_auto)
+
+        if raw_n in {nid_n, name_n, name_no_auto_n}:
+            target_node = nid
+            break
             
     if not target_node: return jsonify({"success": False, "error": "Target node not found"}), 404
 
@@ -245,6 +258,7 @@ def webhook_switch():
         safe_u = urllib.parse.quote(username)
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
+        proto = uinfo.get('protocol', 'out')
         
         # Switch မလုပ်ခင် old node ရဲ့ raw counter delta ကိုသာ ယူ (double count မဖြစ်စေရန်)
         delta_bytes, _ = collect_usage_delta(old_ip, username, uinfo.get('last_raw_bytes', 0))
@@ -255,7 +269,10 @@ def webhook_switch():
         uinfo['last_raw_bytes'] = 0
         b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         uinfo['node'] = target_node  
-        uinfo['key'] = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
+        if proto == 'v2':
+            uinfo['key'] = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+        else:
+            uinfo['key'] = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
@@ -270,11 +287,18 @@ def webhook_switch():
             nip = str(nip).strip()
 
             if nip == new_ip:
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                fire_ssh_bg(nip, cmd_add)
+                if proto == 'v2':
+                    cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
+                    fire_ssh_bg(nip, cmd_add)
+                else:
+                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                    fire_ssh_bg(nip, cmd_add)
             else:
-                cmd_del = get_safe_delete_cmd(username, 'out', port)
-                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+                if proto == 'v2':
+                    cmd_full_del = f"{cmd_del} ; systemctl restart xray"
+                else:
+                    cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
                 fire_ssh_bg(nip, cmd_full_del)
         
     return jsonify({"success": True, "message": "Successfully switched and synced GB"})

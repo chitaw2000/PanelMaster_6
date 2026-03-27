@@ -918,6 +918,7 @@ def switch_user_node(username):
 
         uid = uinfo.get('uuid')
         port = uinfo.get('port')
+        proto = uinfo.get('protocol', 'out')
         safe_u = urllib.parse.quote(username)
         is_blocked = uinfo.get('is_blocked', False)
 
@@ -942,9 +943,12 @@ def switch_user_node(username):
             except Exception:
                 pass
 
-        b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         uinfo['node'] = target_node
-        uinfo['key'] = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
+        if proto == 'v2':
+            uinfo['key'] = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+        else:
+            b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
+            uinfo['key'] = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
         uinfo['last_raw_bytes'] = 0
 
         with open(USERS_DB, 'w') as f:
@@ -959,11 +963,18 @@ def switch_user_node(username):
                 continue
             nip = str(nip).strip()
             if nip == new_ip:
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                execute_ssh_bg(nip, [cmd_add])
+                if proto == 'v2':
+                    cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
+                    execute_ssh_bg(nip, [cmd_add])
+                else:
+                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                    execute_ssh_bg(nip, [cmd_add])
             else:
-                cmd_del = get_safe_delete_cmd(username, 'out', port)
-                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+                if proto == 'v2':
+                    cmd_full_del = f"{cmd_del} ; systemctl restart xray"
+                else:
+                    cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
                 execute_ssh_bg(nip, [cmd_full_del])
 
     return redirect(request.referrer or url_for('dashboard'))
