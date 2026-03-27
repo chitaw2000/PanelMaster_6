@@ -1,4 +1,4 @@
-import json, os, time, subprocess, threading
+import json, os, time, subprocess, threading, requests
 from datetime import datetime
 
 from utils import get_all_servers, db_lock
@@ -71,6 +71,32 @@ def query_ip_user_totals(ip):
     except Exception:
         pass
     return totals
+
+def sync_usage_to_subpanel(username, uinfo):
+    # Best-effort usage sync for external panel.
+    try:
+        used_bytes = float(uinfo.get('used_bytes', 0) or 0)
+        total_gb = float(uinfo.get('total_gb', 0) or 0)
+        used_gb = used_bytes / (1024 ** 3)
+        remaining_gb = max(total_gb - used_gb, 0.0)
+
+        payload = {
+            "name": username,
+            "usedGB": round(used_gb, 4),
+            "totalGB": total_gb,
+            "remainingGB": round(remaining_gb, 4),
+            "expireDate": uinfo.get('expire_date'),
+            "isBlocked": bool(uinfo.get('is_blocked', False))
+        }
+
+        requests.post(
+            "http://167.172.91.222:4000/api/internal/sync-user-usage",
+            json=payload,
+            headers={"Content-Type": "application/json", "x-api-key": "My_Super_Secret_VPN_Key_2026"},
+            timeout=6
+        )
+    except Exception:
+        pass
 
 def get_user_monitor_ips(uinfo, groups):
     ips = []
@@ -165,6 +191,12 @@ def monitor_traffic():
                     uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + total_diff
                     db_changed = True
 
+                # Online means user transferred data in this monitor interval.
+                now_online = total_diff > 0
+                if bool(uinfo.get('is_online', False)) != now_online:
+                    uinfo['is_online'] = now_online
+                    db_changed = True
+
                 if uinfo.get('last_raw_bytes_map') != last_map:
                     uinfo['last_raw_bytes_map'] = last_map
                     db_changed = True
@@ -173,6 +205,19 @@ def monitor_traffic():
                 if float(uinfo.get('last_raw_bytes', 0.0) or 0.0) != current_total:
                     uinfo['last_raw_bytes'] = current_total
                     db_changed = True
+
+                # Throttled usage sync to external panel.
+                if total_diff > 0:
+                    now_ts = int(time.time())
+                    last_sync_at = int(uinfo.get('last_usage_sync_at', 0) or 0)
+                    last_sync_bytes = float(uinfo.get('last_sync_used_bytes', 0) or 0)
+                    current_used = float(uinfo.get('used_bytes', 0) or 0)
+                    delta_since_last_sync = max(current_used - last_sync_bytes, 0.0)
+                    if (now_ts - last_sync_at) >= 30 or delta_since_last_sync >= (50 * 1024 * 1024):
+                        sync_usage_to_subpanel(uname, uinfo)
+                        uinfo['last_usage_sync_at'] = now_ts
+                        uinfo['last_sync_used_bytes'] = current_used
+                        db_changed = True
 
                 limit_bytes = float(uinfo.get('total_gb', 0)) * (1024**3)
                 is_over_limit = limit_bytes > 0 and float(uinfo.get('used_bytes', 0)) >= limit_bytes

@@ -354,3 +354,51 @@ def api_user_action():
                 fire_ssh_bg(nip, cmd_add)
 
     return jsonify({"success": True})
+
+@api_bp.route('/api/internal/delete-user', methods=['POST', 'OPTIONS'])
+def api_internal_delete_user():
+    if request.method == 'OPTIONS':
+        return jsonify({"success": True}), 200
+    if request.headers.get('x-api-key') != MASTER_API_KEY:
+        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+
+    req_data = request.get_json(force=True, silent=True) or {}
+    username = str(req_data.get('username', '')).strip()
+    token = str(req_data.get('token', '')).strip()
+
+    with db_lock:
+        if not os.path.exists(USERS_DB):
+            return jsonify({"success": False, "error": "DB not found"}), 404
+        with open(USERS_DB, 'r') as f:
+            db = json.load(f)
+
+        if not username and token:
+            username = next((u for u, i in db.items() if isinstance(i, dict) and i.get('token') == token), '')
+        if not username or username not in db:
+            return jsonify({"success": False, "error": "User not found"}), 404
+
+        uinfo = db[username]
+        group_id = uinfo.get('group')
+        target_node = uinfo.get('node')
+        port = uinfo.get('port')
+        proto = uinfo.get('protocol', 'out')
+        del db[username]
+
+        with open(USERS_DB, 'w') as f:
+            json.dump(db, f, indent=4)
+
+    groups = load_auto_groups()
+    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+    for nid in g_nodes:
+        nip = get_target_ip(nid)
+        if not nip:
+            continue
+        nip = str(nip).strip()
+        cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+        if proto == 'v2':
+            cmd_full_del = f"{cmd_del} ; systemctl restart xray"
+        else:
+            cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+        fire_ssh_bg(nip, cmd_full_del)
+
+    return jsonify({"success": True, "message": "User deleted"})
