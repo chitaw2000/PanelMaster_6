@@ -983,6 +983,8 @@ def switch_user_node(username):
                         p = s.get("name", "").split(">>>")
                         if len(p) >= 4 and p[0] == "user" and p[1] == username:
                             current_val += float(s.get("value", 0))
+                        elif len(p) >= 4 and p[0] == "inbound" and p[1] == f"out-{username}":
+                            current_val += float(s.get("value", 0))
 
                     last_val = float(uinfo.get('last_raw_bytes', 0.0))
                     if current_val > last_val:

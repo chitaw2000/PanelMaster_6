@@ -75,6 +75,8 @@ def collect_usage_delta(ip, username, last_raw_bytes):
             p = s.get("name", "").split(">>>")
             if len(p) >= 4 and p[0] == "user" and p[1] == username:
                 current_val += float(s.get("value", 0))
+            elif len(p) >= 4 and p[0] == "inbound" and p[1] == f"out-{username}":
+                current_val += float(s.get("value", 0))
 
         last_val = float(last_raw_bytes or 0.0)
         if current_val > last_val:
@@ -229,7 +231,18 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-    return jsonify({"success": True, "keys": api_keys_dict, "token": token})
+    # User-facing response: return active key info as primary fields.
+    active_key_data = api_keys_dict.get(target_node, {})
+    return jsonify({
+        "success": True,
+        "key": active_key,
+        "keyData": active_key_data,
+        "activeNode": target_node,
+        "totalGB": total_gb,
+        "token": token,
+        # Keep full map for backward compatibility with older integrators.
+        "allKeys": api_keys_dict
+    })
 
 @api_bp.route('/api/webhook/switch', methods=['POST', 'OPTIONS'])
 def webhook_switch():
