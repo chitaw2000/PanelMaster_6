@@ -5,10 +5,12 @@ from core_auto import find_available_node, load_auto_groups, save_auto_groups
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
 try:
-    from config import USERS_DB, NODES_LIST
+    from config import USERS_DB, NODES_LIST, load_config
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+    def load_config():
+        return {"switch_mode": "single_active"}
 
 def get_robust_ip(node_id):
     node_key = str(node_id or "").strip()
@@ -101,6 +103,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
     if not usernames: return False, "❌ No usernames!"
 
     db = {}
+    switch_mode = load_config().get("switch_mode", "single_active")
     with db_lock:
         if os.path.exists(USERS_DB):
             try:
@@ -148,9 +151,9 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
                 cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
 
-                # Pre-provision for group users: add key to all nodes in group.
+                # Mode-aware provisioning for Shadowsocks group users.
                 target_ips = [target_ip]
-                if group_id:
+                if group_id and switch_mode == "pre_provision":
                     target_ips = get_group_node_ips(group_id) or [target_ip]
                 for ip in target_ips:
                     ss_cmds.setdefault(str(ip).strip(), []).append(cmd)
@@ -181,6 +184,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
         return True, "Success"
 
 def toggle_key(username):
+    switch_mode = load_config().get("switch_mode", "single_active")
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -191,7 +195,7 @@ def toggle_key(username):
                     protocol = user.get('protocol', 'v2')
                     group_id = user.get('group')
                     target_ips = [str(ip).strip()]
-                    if protocol == 'out' and group_id:
+                    if protocol == 'out' and group_id and switch_mode == "pre_provision":
                         target_ips = get_group_node_ips(group_id) or target_ips
                     if user['is_blocked']: 
                         user['is_online'] = False
@@ -219,6 +223,7 @@ def edit_key(username, total_gb, expire_date):
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def renew_key(username, add_gb, add_days):
+    switch_mode = load_config().get("switch_mode", "single_active")
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -241,7 +246,7 @@ def renew_key(username, add_gb, add_days):
                         prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                         target_ips = [str(ip).strip()]
-                        if group_id:
+                        if group_id and switch_mode == "pre_provision":
                             target_ips = get_group_node_ips(group_id) or target_ips
                         for tip in target_ips:
                             execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
@@ -249,6 +254,7 @@ def renew_key(username, add_gb, add_days):
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def delete_key(username):
+    switch_mode = load_config().get("switch_mode", "single_active")
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -265,7 +271,7 @@ def delete_key(username):
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                         target_ips = [str(ip).strip()]
                         group_id = info.get('group')
-                        if group_id:
+                        if group_id and switch_mode == "pre_provision":
                             target_ips = get_group_node_ips(group_id) or target_ips
                         for tip in target_ips:
                             execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
