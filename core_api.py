@@ -110,6 +110,56 @@ def resolve_user_node_ids(groups, group_id, target_node):
         node_ids = [target_node]
     return node_ids
 
+def apply_user_action_on_nodes(username, uinfo, action):
+    """
+    Apply suspend/resume/delete on resolved node targets for a user record.
+    """
+    target_node = uinfo.get('node')
+    node_ip = get_target_ip(target_node)
+    active_ip = str(node_ip).strip() if node_ip else None
+    port = uinfo.get('port')
+    uid = uinfo.get('uuid')
+    group_id = uinfo.get('group')
+    proto = uinfo.get('protocol', 'out')
+
+    groups = load_auto_groups()
+    target_node_ids = resolve_user_node_ids(groups, group_id, target_node)
+
+    # Hard block/delete for SS in pre-provision mode: remove from all known nodes.
+    if action in ["suspend", "delete"] and proto != 'v2':
+        all_node_ids = list(get_all_servers().keys())
+        seen = set(str(n).strip().lower() for n in target_node_ids)
+        for nid in all_node_ids:
+            nkey = str(nid).strip().lower()
+            if nkey not in seen:
+                target_node_ids.append(nid)
+                seen.add(nkey)
+
+    for nid in target_node_ids:
+        nip = get_target_ip(nid)
+        if not nip:
+            continue
+        nip = str(nip).strip()
+
+        if action in ["suspend", "delete"]:
+            cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+            if proto == 'v2':
+                cmd_full_del = f"{cmd_del} ; systemctl restart xray"
+            else:
+                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            if not run_ssh_sync(nip, cmd_full_del, timeout=25):
+                fire_ssh_bg(nip, cmd_full_del)
+        elif action == "resume":
+            if proto == 'v2':
+                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
+                fire_ssh_bg(nip, cmd_add)
+            elif group_id:
+                cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
+                fire_ssh_bg(nip, cmd_add)
+            elif nip == active_ip:
+                cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
+                fire_ssh_bg(nip, cmd_add)
+
 @api_bp.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -372,44 +422,84 @@ def api_user_action():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    groups = load_auto_groups()
-    target_node_ids = resolve_user_node_ids(groups, group_id, target_node)
-    # Hard block/delete for SS in pre-provision mode: remove from all known nodes.
-    if action in ["suspend", "delete"] and proto != 'v2':
-        all_node_ids = list(get_all_servers().keys())
-        seen = set(str(n).strip().lower() for n in target_node_ids)
-        for nid in all_node_ids:
-            nkey = str(nid).strip().lower()
-            if nkey not in seen:
-                target_node_ids.append(nid)
-                seen.add(nkey)
-
-    for nid in target_node_ids:
-        nip = get_target_ip(nid)
-        if not nip: continue
-        nip = str(nip).strip()
-
-        if action in ["suspend", "delete"]:
-            cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
-            if proto == 'v2':
-                cmd_full_del = f"{cmd_del} ; systemctl restart xray"
-            else:
-                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            # Try synchronous delete first for stronger blocked enforcement.
-            if not run_ssh_sync(nip, cmd_full_del, timeout=25):
-                fire_ssh_bg(nip, cmd_full_del)
-        elif action == "resume":
-            if proto == 'v2':
-                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
-                fire_ssh_bg(nip, cmd_add)
-            elif group_id:
-                cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
-                fire_ssh_bg(nip, cmd_add)
-            elif nip == active_ip:
-                cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
-                fire_ssh_bg(nip, cmd_add)
+    apply_user_action_on_nodes(username, uinfo, action)
 
     return jsonify({"success": True})
+
+@api_bp.route('/api/internal/edit-user', methods=['POST', 'OPTIONS'])
+def api_internal_edit_user():
+    if request.method == 'OPTIONS':
+        return jsonify({"success": True}), 200
+    if request.headers.get('x-api-key') != MASTER_API_KEY:
+        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+
+    req_data = request.get_json(force=True, silent=True) or {}
+    username = str(req_data.get('username', '')).strip()
+    if not username:
+        return jsonify({"success": False, "error": "Missing username"}), 400
+
+    total_gb = req_data.get('totalGB')
+    expire_date = str(req_data.get('expireDate', '')).strip()
+    try:
+        if total_gb is not None:
+            total_gb = float(total_gb)
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid totalGB"}), 400
+
+    with db_lock:
+        if not os.path.exists(USERS_DB):
+            return jsonify({"success": False, "error": "DB not found"}), 404
+        with open(USERS_DB, 'r') as f:
+            db = json.load(f)
+        if username not in db or not isinstance(db.get(username), dict):
+            return jsonify({"success": False, "error": "User not found"}), 404
+
+        uinfo = db[username]
+        if total_gb is not None:
+            uinfo['total_gb'] = total_gb
+        if expire_date:
+            uinfo['expire_date'] = expire_date
+        # As requested by sub-panel flow: edited user becomes active/unblocked.
+        uinfo['is_blocked'] = False
+        uinfo['is_online'] = False
+        if 'block_enforced' in uinfo:
+            uinfo['block_enforced'] = False
+
+        with open(USERS_DB, 'w') as f:
+            json.dump(db, f, indent=4)
+
+    apply_user_action_on_nodes(username, uinfo, "resume")
+    return jsonify({"success": True, "message": "Action completed successfully"})
+
+@api_bp.route('/api/internal/block-user', methods=['POST', 'OPTIONS'])
+def api_internal_block_user():
+    if request.method == 'OPTIONS':
+        return jsonify({"success": True}), 200
+    if request.headers.get('x-api-key') != MASTER_API_KEY:
+        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+
+    req_data = request.get_json(force=True, silent=True) or {}
+    username = str(req_data.get('username', '')).strip()
+    if not username:
+        return jsonify({"success": False, "error": "Missing username"}), 400
+
+    with db_lock:
+        if not os.path.exists(USERS_DB):
+            return jsonify({"success": False, "error": "DB not found"}), 404
+        with open(USERS_DB, 'r') as f:
+            db = json.load(f)
+        if username not in db or not isinstance(db.get(username), dict):
+            return jsonify({"success": False, "error": "User not found"}), 404
+
+        uinfo = db[username]
+        uinfo['is_blocked'] = True
+        uinfo['is_online'] = False
+        uinfo['block_enforced'] = False
+        with open(USERS_DB, 'w') as f:
+            json.dump(db, f, indent=4)
+
+    apply_user_action_on_nodes(username, uinfo, "suspend")
+    return jsonify({"success": True, "message": "Action completed successfully"})
 
 @api_bp.route('/api/internal/delete-user', methods=['POST', 'OPTIONS'])
 def api_internal_delete_user():
