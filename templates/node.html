@@ -136,9 +136,9 @@
         </p>
         <div class="mb-6">
             <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">
-                Type <span class="text-red-600">RESET {{ node_id }}</span> to continue
+                Type this node <span class="text-red-600">ID or Name</span> to continue
             </label>
-            <input id="hardResetInput" type="text" placeholder="RESET {{ node_id }}" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-red-300">
+            <input id="hardResetInput" type="text" placeholder="{{ node_id }} or {{ node_name }}" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-red-300">
         </div>
         <form id="hardResetForm" action="/hard_reset_node_keys/{{ node_id }}" method="POST">
             <div class="flex justify-end gap-3">
@@ -265,9 +265,9 @@ function submitDelete(u){let f=document.getElementById('actionDeleteForm');f.act
 function openHardResetModal(){const m=document.getElementById('hardResetModal');if(m){document.getElementById('hardResetInput').value='';m.classList.remove('hidden');}}
 function closeHardResetModal(){const m=document.getElementById('hardResetModal');if(m)m.classList.add('hidden');}
 document.getElementById('hardResetForm')?.addEventListener('submit', function(e){
-    const expected='RESET {{ node_id }}';
-    const v=(document.getElementById('hardResetInput')?.value||'').trim();
-    if(v!==expected){e.preventDefault();alert('Confirmation text does not match.');return;}
+    const v=(document.getElementById('hardResetInput')?.value||'').trim().toLowerCase();
+    const allowed = ['{{ node_id|lower }}', '{{ node_name|lower }}'];
+    if(!allowed.includes(v)){e.preventDefault();alert('Please type this node ID or Name exactly.');return;}
     if(!confirm('Final confirmation: delete ALL keys on {{ node_id }}?')){e.preventDefault();}
 });
 
