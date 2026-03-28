@@ -487,6 +487,71 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
     except Exception as e:
         print(f"Sync New Server Error: {e}")
 
+def provision_group_users_to_node(group_id, node_id, node_ip, only_usernames=None):
+    """
+    Ensure existing group users are actually created on the target node.
+    This is required for newly added/recovered nodes before external sync.
+    """
+    try:
+        with db_lock:
+            if not os.path.exists(USERS_DB):
+                return 0
+            with open(USERS_DB, 'r') as f:
+                db = json.load(f)
+
+        only_set = set(only_usernames or [])
+        cmds = []
+        added_count = 0
+
+        for uname, uinfo in db.items():
+            if not isinstance(uinfo, dict):
+                continue
+            if uinfo.get('group') != group_id:
+                continue
+            if only_set and uname not in only_set:
+                continue
+            if bool(uinfo.get('is_blocked', False)):
+                continue
+
+            uid = str(uinfo.get('uuid', '')).strip()
+            proto = str(uinfo.get('protocol', 'out')).strip()
+            if not uid:
+                continue
+
+            if proto == 'v2':
+                cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+            else:
+                port = str(uinfo.get('port', '')).strip()
+                if not port:
+                    continue
+                cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+            cmds.append(cmd)
+            added_count += 1
+
+        if not cmds:
+            return 0
+
+        # Restart xray once per chunk to avoid excessive restarts with large groups.
+        chunk_size = 80
+        for i in range(0, len(cmds), chunk_size):
+            chunk = cmds[i:i + chunk_size]
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            execute_ssh_bg(node_ip, [prefix + " ; ".join(chunk) + suffix])
+        return added_count
+    except Exception as e:
+        print(f"Provision Users Error ({group_id}/{node_id}): {e}")
+        return 0
+
+def deploy_and_sync_group_node(group_id, node_id, node_ip, only_usernames=None):
+    """
+    1) Provision existing users on server node.
+    2) Push updated key mapping to external panel.
+    """
+    provision_group_users_to_node(group_id, node_id, node_ip, only_usernames=only_usernames)
+    time.sleep(1)
+    sync_new_node_to_subpanel(group_id, node_id, node_ip, only_usernames=only_usernames)
+
 @app.route('/add_server_to_group/<group_id>', methods=['POST'])
 def add_server_to_group(group_id):
     nid = request.form.get('node_id', '').strip().replace(" ", "_")
@@ -501,7 +566,7 @@ def add_server_to_group(group_id):
     if group_id in groups and nid and nip:
         groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
         save_auto_groups(groups)
-        threading.Thread(target=sync_new_node_to_subpanel, args=(group_id, nid, nip), daemon=True).start()
+        threading.Thread(target=deploy_and_sync_group_node, args=(group_id, nid, nip), daemon=True).start()
         
     return redirect(f'/group/{group_id}?newly_added={nid}')
 
@@ -519,9 +584,9 @@ def resync_server_to_subpanel(group_id, node_id):
     if not node_ip:
         return redirect(request.referrer or f'/group/{group_id}')
 
-    # Manual recovery push for external panel when webhook was previously unavailable.
+    # Manual recovery push + node provisioning for missed/failed sync cases.
     threading.Thread(
-        target=sync_new_node_to_subpanel,
+        target=deploy_and_sync_group_node,
         args=(group_id, node_id, node_ip),
         daemon=True
     ).start()

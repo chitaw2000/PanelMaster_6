@@ -151,6 +151,11 @@
                         </button>
                     </form>
                 </div>
+                <form action="/resync_server_to_subpanel/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Push all existing users to this server on external panel?');" class="m-0 mb-4">
+                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-black py-2.5 rounded-xl transition uppercase tracking-widest shadow-sm">
+                        <i class="fa-solid fa-cloud-arrow-up mr-1.5"></i> Sync Users To External Panel
+                    </button>
+                </form>
                 
                 <div class="mt-auto space-y-4 border-t border-slate-50 pt-4">
                     <div>
