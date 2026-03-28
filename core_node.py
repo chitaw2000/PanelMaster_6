@@ -196,6 +196,13 @@ def toggle_key(username):
                     if user['is_blocked']: 
                         user['is_online'] = False
                         cmd = get_safe_delete_cmd(username, protocol, user.get('port', '443'))
+                        if protocol == 'out':
+                            # Hard block for SS: remove from all known nodes so no stale node remains connectable.
+                            target_ips = []
+                            for ninfo in get_all_servers().values():
+                                nip = str(ninfo.get('ip', '')).strip()
+                                if nip and nip not in target_ips:
+                                    target_ips.append(nip)
                     else:
                         uid = user['uuid']
                         cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}" if protocol == 'v2' else get_safe_add_out_cmd(username, uid, user['port'])

@@ -333,7 +333,21 @@ def api_user_action():
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
 
     token = req_data.get('token')
-    action = req_data.get('action')
+    action_raw = str(req_data.get('action', '')).strip().lower()
+    action_alias = {
+        "suspend": "suspend",
+        "block": "suspend",
+        "blocked": "suspend",
+        "pause": "suspend",
+        "resume": "resume",
+        "unblock": "resume",
+        "unblocked": "resume",
+        "unpause": "resume",
+        "delete": "delete"
+    }
+    action = action_alias.get(action_raw)
+    if not action:
+        return jsonify({"success": False, "error": f"Unsupported action: {action_raw}"}), 400
 
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False}), 404
@@ -360,6 +374,15 @@ def api_user_action():
         
     groups = load_auto_groups()
     target_node_ids = resolve_user_node_ids(groups, group_id, target_node)
+    # Hard block/delete for SS in pre-provision mode: remove from all known nodes.
+    if action in ["suspend", "delete"] and proto != 'v2':
+        all_node_ids = list(get_all_servers().keys())
+        seen = set(str(n).strip().lower() for n in target_node_ids)
+        for nid in all_node_ids:
+            nkey = str(nid).strip().lower()
+            if nkey not in seen:
+                target_node_ids.append(nid)
+                seen.add(nkey)
 
     for nid in target_node_ids:
         nip = get_target_ip(nid)
