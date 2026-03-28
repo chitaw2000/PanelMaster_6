@@ -85,6 +85,28 @@ def run_ssh_sync(ip, cmd, timeout=20):
     except Exception:
         return False
 
+def measure_ping_latency_ms(ip):
+    if not ip:
+        return None
+    ip = str(ip).strip()
+    try:
+        res = subprocess.run(
+            f"ping -c 1 -W 2 {ip}",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=4
+        )
+        if res.returncode != 0:
+            return None
+        out = (res.stdout or "") + "\n" + (res.stderr or "")
+        m = re.search(r"time[=<]\s*([0-9.]+)\s*ms", out)
+        if not m:
+            return None
+        return round(float(m.group(1)), 2)
+    except Exception:
+        return None
+
 @app.route('/api/user_ip/<username>')
 def api_user_ip(username):
     with db_lock:
@@ -669,7 +691,24 @@ def node_view(node_id):
             
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_ip, users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
+    node_ping_ms = measure_ping_latency_ms(node_ip)
+    node_ping_status = "online" if node_ping_ms is not None else "offline"
+
+    return render_template(
+        'node.html',
+        node_id=node_id,
+        node_name=node_info.get('name', ''),
+        node_ip=node_ip,
+        users=users,
+        other_nodes=other_nodes,
+        config=config,
+        used_gb=used_gb,
+        limit_tb=limit_tb,
+        is_alarm=is_alarm,
+        health=health,
+        node_ping_ms=node_ping_ms,
+        node_ping_status=node_ping_status
+    )
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
@@ -841,28 +880,10 @@ def api_ping(node_id):
     ip = get_target_ip(node_id)
     if not ip:
         return jsonify({"status": "offline", "msg": "IP not found"})
-
-    ip = str(ip).strip()
-    try:
-        # Linux ping format example: time=12.3 ms
-        res = subprocess.run(
-            f"ping -c 1 -W 2 {ip}",
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=4
-        )
-        if res.returncode != 0:
-            return jsonify({"status": "offline"})
-
-        out = (res.stdout or "") + "\n" + (res.stderr or "")
-        m = re.search(r"time[=<]\s*([0-9.]+)\s*ms", out)
-        if m:
-            latency_ms = float(m.group(1))
-            return jsonify({"status": "online", "latency_ms": round(latency_ms, 2)})
-        return jsonify({"status": "online"})
-    except Exception as e:
-        return jsonify({"status": "offline", "msg": str(e)})
+    latency_ms = measure_ping_latency_ms(ip)
+    if latency_ms is None:
+        return jsonify({"status": "offline"})
+    return jsonify({"status": "online", "latency_ms": latency_ms})
 
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):
