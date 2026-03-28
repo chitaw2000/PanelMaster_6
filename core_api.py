@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading, time
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
@@ -439,12 +439,15 @@ def api_internal_edit_user():
         return jsonify({"success": False, "error": "Missing username"}), 400
 
     total_gb = req_data.get('totalGB')
+    used_gb = req_data.get('usedGB')
     expire_date = str(req_data.get('expireDate', '')).strip()
     try:
         if total_gb is not None:
             total_gb = float(total_gb)
+        if used_gb is not None:
+            used_gb = float(used_gb)
     except Exception:
-        return jsonify({"success": False, "error": "Invalid totalGB"}), 400
+        return jsonify({"success": False, "error": "Invalid totalGB/usedGB"}), 400
 
     with db_lock:
         if not os.path.exists(USERS_DB):
@@ -457,6 +460,15 @@ def api_internal_edit_user():
         uinfo = db[username]
         if total_gb is not None:
             uinfo['total_gb'] = total_gb
+        if used_gb is not None:
+            # Restore/sync path: overwrite master-side usage from client panel.
+            used_bytes = max(used_gb, 0.0) * (1024 ** 3)
+            uinfo['used_bytes'] = used_bytes
+            uinfo['last_raw_bytes'] = 0
+            if 'last_raw_bytes_map' in uinfo:
+                uinfo['last_raw_bytes_map'] = {}
+            uinfo['last_sync_used_bytes'] = used_bytes
+            uinfo['last_usage_sync_at'] = int(time.time())
         if expire_date:
             uinfo['expire_date'] = expire_date
         # As requested by sub-panel flow: edited user becomes active/unblocked.
