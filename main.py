@@ -505,6 +505,28 @@ def add_server_to_group(group_id):
         
     return redirect(f'/group/{group_id}?newly_added={nid}')
 
+@app.route('/resync_server_to_subpanel/<group_id>/<node_id>', methods=['POST'])
+def resync_server_to_subpanel(group_id, node_id):
+    groups = load_auto_groups()
+    if group_id not in groups or node_id not in groups[group_id].get("nodes", {}):
+        return redirect(request.referrer or url_for('dashboard'))
+
+    ndata = groups[group_id]["nodes"][node_id]
+    node_ip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
+    if not node_ip:
+        node_ip = get_target_ip(node_id) or ""
+    node_ip = str(node_ip).strip()
+    if not node_ip:
+        return redirect(request.referrer or f'/group/{group_id}')
+
+    # Manual recovery push for external panel when webhook was previously unavailable.
+    threading.Thread(
+        target=sync_new_node_to_subpanel,
+        args=(group_id, node_id, node_ip),
+        daemon=True
+    ).start()
+    return redirect(request.referrer or f'/group/{group_id}')
+
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
 def delete_server_from_group(group_id, node_id):
     groups = load_auto_groups()
