@@ -89,12 +89,24 @@ def sync_usage_to_subpanel(username, uinfo):
             "isBlocked": bool(uinfo.get('is_blocked', False))
         }
 
-        requests.post(
+        headers = {"Content-Type": "application/json", "x-api-key": "My_Super_Secret_VPN_Key_2026"}
+        urls = [
             "http://167.172.91.222:4000/api/internal/sync-user-usage",
-            json=payload,
-            headers={"Content-Type": "application/json", "x-api-key": "My_Super_Secret_VPN_Key_2026"},
-            timeout=6
-        )
+            "http://167.172.91.222:4000/admin/api/internal/sync-user-usage"
+        ]
+
+        delivered = False
+        for url in urls:
+            try:
+                r = requests.post(url, json=payload, headers=headers, timeout=6)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+                    break
+            except Exception:
+                pass
+
+        if not delivered:
+            print(f"Usage Sync Failed for {username}")
     except Exception:
         pass
 
