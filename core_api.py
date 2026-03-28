@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import get_safe_delete_cmd
+from core_engine import get_safe_delete_cmd, get_safe_add_out_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -196,7 +196,7 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
             fire_ssh_bg(nip, cmd_add)
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
@@ -347,10 +347,10 @@ def api_user_action():
             fire_ssh_bg(nip, cmd_full_del)
         elif action == "resume":
             if group_id:
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
                 fire_ssh_bg(nip, cmd_add)
             elif nip == active_ip:
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
                 fire_ssh_bg(nip, cmd_add)
 
     return jsonify({"success": True})

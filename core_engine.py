@@ -26,3 +26,23 @@ def get_safe_delete_cmd(username, protocol, port):
         # 🚀 Outline SS အတွက် သီးသန့် Zombie Port ရှင်းလင်းရေး
         py_clean = f"python3 -c \"import json; p='/usr/local/etc/xray/config.json'; d=json.load(open(p)); d['inbounds']=[i for i in d.get('inbounds',[]) if str(i.get('port',''))!='{port}']; json.dump(d,open(p,'w'),indent=4)\""
         return f"{py_clean} ; yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
+
+def get_safe_add_out_cmd(username, uid, port):
+    """
+    Add SS outbound safely by cleaning stale out-* entries first:
+    - remove any out-* inbound with same tag
+    - remove any out-* inbound using same port (port collision guard)
+    """
+    tag = f"out-{username}"
+    py_clean = (
+        "python3 -c \"import json; p='/usr/local/etc/xray/config.json'; "
+        "d=json.load(open(p)); t='%s'; prt='%s'; "
+        "d['inbounds']=[i for i in d.get('inbounds',[]) if not (str(i.get('tag','')).startswith('out-') and (str(i.get('tag',''))==t or str(i.get('port',''))==prt))]; "
+        "json.dump(d,open(p,'w'),indent=4)\""
+    ) % (tag, str(port))
+    return (
+        f"{py_clean} ; "
+        f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; "
+        f"ufw allow {port}/tcp >/dev/null 2>&1 || true ; "
+        f"ufw allow {port}/udp >/dev/null 2>&1 || true"
+    )

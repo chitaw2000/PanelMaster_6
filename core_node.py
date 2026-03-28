@@ -2,7 +2,7 @@ import json, os, uuid, base64, urllib.parse, random, string, threading, requests
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
-from core_engine import execute_ssh_bg, get_safe_delete_cmd
+from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -146,7 +146,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                cmd = get_safe_add_out_cmd(u, uid, port)
 
                 # Pre-provision for group users: add key to all nodes in group.
                 target_ips = [target_ip]
@@ -198,7 +198,7 @@ def toggle_key(username):
                         cmd = get_safe_delete_cmd(username, protocol, user.get('port', '443'))
                     else:
                         uid = user['uuid']
-                        cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}" if protocol == 'v2' else f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
+                        cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}" if protocol == 'v2' else get_safe_add_out_cmd(username, uid, user['port'])
                     
                     if protocol == 'v2':
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
@@ -237,7 +237,7 @@ def renew_key(username, add_gb, add_days):
                         cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                     else:
-                        cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
+                        cmd = get_safe_add_out_cmd(username, uid, port)
                         prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                         target_ips = [str(ip).strip()]

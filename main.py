@@ -6,7 +6,7 @@ from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, lo
 from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB
 from core_auto import load_auto_groups, save_auto_groups
 
-from core_engine import execute_ssh_bg, get_safe_delete_cmd
+from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cmd
 from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
 from core_ip import get_active_ips
@@ -360,7 +360,7 @@ def group_view(group_id):
                     credentials = f"chacha20-ietf-poly1305:{uid}"
                     b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                     expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
-                    cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                    cmd = get_safe_add_out_cmd(uname, uid, port)
                     
                 if info.get('key') != expected_key:
                     info['key'] = expected_key
@@ -524,7 +524,7 @@ def provision_group_users_to_node(group_id, node_id, node_ip, only_usernames=Non
                 port = str(uinfo.get('port', '')).strip()
                 if not port:
                     continue
-                cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                cmd = get_safe_add_out_cmd(uname, uid, port)
             cmds.append(cmd)
             added_count += 1
 
@@ -721,7 +721,7 @@ def node_view(node_id):
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                cmd = get_safe_add_out_cmd(uname, uid, port)
                 
             # Database တွင် အပြောင်းအလဲလုပ်ခြင်းကို Active ဖြစ်သော ပင်မဆာဗာ (၁) ခုတည်းအတွက်သာ လုပ်မည်
             if is_active_node:
@@ -910,7 +910,7 @@ def replace_id(current_id):
                         credentials = f"chacha20-ietf-poly1305:{uid}"
                         b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                         uinfo['key'] = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
-                        cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                        cmd = get_safe_add_out_cmd(uname, uid, port)
                         
                     db_changed = True
                     if not uinfo.get('is_blocked', False):
@@ -1323,7 +1323,7 @@ def upload_backup():
                     credentials = f"chacha20-ietf-poly1305:{uid}"
                     b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                     expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
-                    cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                    cmd = get_safe_add_out_cmd(uname, uid, port)
                 
                 uinfo['key'] = expected_key
                 if not uinfo.get('is_blocked', False):
