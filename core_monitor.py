@@ -36,19 +36,63 @@ def get_target_ip(node_id):
                     return normalized[-1]
     return None
 
+def resolve_user_node_ids(groups, group_id, target_node):
+    node_ids = []
+    if group_id:
+        node_ids = list((groups.get(group_id, {}) or {}).get("nodes", {}).keys())
+    if not node_ids and target_node:
+        target_norm = str(target_node).strip().lower()
+        for _, gdata in groups.items():
+            g_nodes = (gdata or {}).get("nodes", {})
+            for nid in g_nodes.keys():
+                if str(nid).strip().lower() == target_norm:
+                    node_ids = list(g_nodes.keys())
+                    break
+            if node_ids:
+                break
+    if not node_ids and target_node:
+        node_ids = [target_node]
+    return node_ids
+
 def suspend_user_everywhere(username, uinfo):
     port = uinfo.get('port')
     group_id = uinfo.get('group')
     target_node = uinfo.get('node')
+    proto = uinfo.get('protocol', 'out')
     groups = load_auto_groups()
-    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
-    
-    for nid in g_nodes:
+    node_ids = resolve_user_node_ids(groups, group_id, target_node)
+    if proto != 'v2':
+        # SS pre-provision safety: hard delete from all known nodes.
+        all_node_ids = list(get_all_servers().keys())
+        seen = set(str(n).strip().lower() for n in node_ids)
+        for nid in all_node_ids:
+            nid_n = str(nid).strip().lower()
+            if nid_n not in seen:
+                node_ids.append(nid)
+                seen.add(nid_n)
+
+    ok_count = 0
+    total_targets = 0
+    for nid in node_ids:
         nip = get_target_ip(nid)
-        if not nip: continue
-        cmd_del = get_safe_delete_cmd(username, 'out', port)
-        full_del = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
-        subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not nip:
+            continue
+        total_targets += 1
+        cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+        if proto == 'v2':
+            full_del = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; systemctl restart xray'"
+        else:
+            full_del = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
+        try:
+            res = subprocess.run(full_del, shell=True, capture_output=True, text=True, timeout=25)
+            if res.returncode == 0:
+                ok_count += 1
+            else:
+                subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    return total_targets > 0 and ok_count > 0
 
 def query_ip_user_totals(ip):
     totals = {}
@@ -172,7 +216,19 @@ def monitor_traffic():
 
             # Update each user by summing diffs across monitored nodes.
             for uname, uinfo in db.items():
-                if uname not in user_ips_map or not isinstance(uinfo, dict) or uinfo.get('is_blocked', False):
+                if not isinstance(uinfo, dict):
+                    continue
+
+                # If user is already blocked, keep retrying node-side enforcement until success.
+                if uinfo.get('is_blocked', False):
+                    if not bool(uinfo.get('block_enforced', False)):
+                        enforced = suspend_user_everywhere(uname, uinfo)
+                        if enforced:
+                            uinfo['block_enforced'] = True
+                            db_changed = True
+                    continue
+
+                if uname not in user_ips_map:
                     continue
 
                 last_map = uinfo.get('last_raw_bytes_map')
@@ -237,8 +293,13 @@ def monitor_traffic():
 
                 if is_over_limit or is_expired:
                     uinfo['is_blocked'] = True
+                    uinfo['is_online'] = False
+                    uinfo['block_enforced'] = False
                     db_changed = True
-                    threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
+                    enforced = suspend_user_everywhere(uname, uinfo)
+                    if enforced:
+                        uinfo['block_enforced'] = True
+                        db_changed = True
 
             if db_changed:
                 with db_lock:
