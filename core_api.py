@@ -153,7 +153,7 @@ def apply_user_action_on_nodes(username, uinfo, action):
             if proto == 'v2':
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
                 fire_ssh_bg(nip, cmd_add)
-            elif group_id:
+            elif group_id or len(target_node_ids) > 1:
                 cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
                 fire_ssh_bg(nip, cmd_add)
             elif nip == active_ip:
@@ -471,16 +471,26 @@ def api_internal_edit_user():
             uinfo['last_usage_sync_at'] = int(time.time())
         if expire_date:
             uinfo['expire_date'] = expire_date
-        # As requested by sub-panel flow: edited user becomes active/unblocked.
-        uinfo['is_blocked'] = False
+        # Decide block state from synced values (important for backup restore flows).
+        now_date = datetime.now().strftime("%Y-%m-%d")
+        total_gb_eff = float(uinfo.get('total_gb', 0) or 0)
+        used_bytes_eff = float(uinfo.get('used_bytes', 0) or 0)
+        limit_bytes = total_gb_eff * (1024 ** 3)
+        is_over_limit = limit_bytes > 0 and used_bytes_eff >= limit_bytes
+        is_expired = bool(uinfo.get('expire_date')) and now_date > str(uinfo.get('expire_date'))
+        uinfo['is_blocked'] = bool(is_over_limit or is_expired)
         uinfo['is_online'] = False
         if 'block_enforced' in uinfo:
-            uinfo['block_enforced'] = False
+            uinfo['block_enforced'] = bool(uinfo['is_blocked']) is False
 
         with open(USERS_DB, 'w') as f:
             json.dump(db, f, indent=4)
 
-    apply_user_action_on_nodes(username, uinfo, "resume")
+    # Apply runtime state to nodes immediately.
+    if uinfo.get('is_blocked', False):
+        apply_user_action_on_nodes(username, uinfo, "suspend")
+    else:
+        apply_user_action_on_nodes(username, uinfo, "resume")
     return jsonify({"success": True, "message": "Action completed successfully"})
 
 @api_bp.route('/api/internal/block-user', methods=['POST', 'OPTIONS'])
