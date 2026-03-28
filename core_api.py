@@ -372,7 +372,9 @@ def api_user_action():
                 cmd_full_del = f"{cmd_del} ; systemctl restart xray"
             else:
                 cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            fire_ssh_bg(nip, cmd_full_del)
+            # Try synchronous delete first for stronger blocked enforcement.
+            if not run_ssh_sync(nip, cmd_full_del, timeout=25):
+                fire_ssh_bg(nip, cmd_full_del)
         elif action == "resume":
             if proto == 'v2':
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
