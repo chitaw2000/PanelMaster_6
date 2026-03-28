@@ -997,12 +997,69 @@ def api_stats(node_id):
 
 @app.route('/install_node/<node_id>', methods=['POST'])
 def install_node_action(node_id):
+    wants_json = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or \
+        'application/json' in (request.headers.get('Accept') or '')
+
     ip = get_target_ip(node_id)
-    if ip: 
-        ip_str = str(ip).strip()
-        cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
-        subprocess.run(cmd, shell=True)
-    return redirect(request.referrer)
+    if not ip:
+        if wants_json:
+            return jsonify({"success": False, "error": "Node IP not found"}), 404
+        return redirect(request.referrer or url_for('dashboard'))
+
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "install_node.sh")
+    if not os.path.exists(script_path):
+        if wants_json:
+            return jsonify({"success": False, "error": f"install script not found: {script_path}"}), 500
+        return redirect(request.referrer or url_for('dashboard'))
+
+    ip_str = str(ip).strip()
+    try:
+        with open(script_path, 'r', encoding='utf-8') as f:
+            install_script = f.read()
+
+        install_res = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=20", "-o", "StrictHostKeyChecking=no", f"root@{ip_str}", "bash -s"],
+            input=install_script,
+            text=True,
+            capture_output=True,
+            timeout=480
+        )
+        if install_res.returncode != 0:
+            err = (install_res.stderr or install_res.stdout or "install failed").strip()
+            if wants_json:
+                return jsonify({"success": False, "error": err[:500]}), 500
+            return redirect(request.referrer or url_for('dashboard'))
+
+        # Verify runtime readiness after install.
+        verify_cmd = (
+            "command -v /usr/local/bin/xray >/dev/null 2>&1 && "
+            "command -v /usr/local/bin/v2ray-node-add-out >/dev/null 2>&1 && "
+            "command -v /usr/local/bin/v2ray-node-add-vless >/dev/null 2>&1 && "
+            "systemctl is-active --quiet xray"
+        )
+        verify_res = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=12", "-o", "StrictHostKeyChecking=no", f"root@{ip_str}", verify_cmd],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if verify_res.returncode != 0:
+            err = (verify_res.stderr or verify_res.stdout or "xray not ready").strip()
+            if wants_json:
+                return jsonify({"success": False, "error": err[:500]}), 500
+            return redirect(request.referrer or url_for('dashboard'))
+
+        if wants_json:
+            return jsonify({"success": True, "message": "Xray installed and ready"})
+        return redirect(request.referrer or url_for('dashboard'))
+    except subprocess.TimeoutExpired:
+        if wants_json:
+            return jsonify({"success": False, "error": "Install timeout"}), 504
+        return redirect(request.referrer or url_for('dashboard'))
+    except Exception as e:
+        if wants_json:
+            return jsonify({"success": False, "error": str(e)}), 500
+        return redirect(request.referrer or url_for('dashboard'))
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
 def restart_xray_action(node_id):

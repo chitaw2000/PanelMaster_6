@@ -452,8 +452,16 @@ document.getElementById('installForm').addEventListener('submit', async function
     statusText.innerHTML = '<i class="fa-solid fa-cloud-arrow-down fa-bounce text-indigo-500 mr-2 text-lg"></i> <span class="text-indigo-600 font-black">Please wait...</span> Downloading & installing Xray Core. This takes 1-2 minutes.';
     
     try {
-        // နောက်ကွယ်မှ Install လုပ်ရန် လှမ်းပို့မည် (၂ မိနစ်ခန့် ကြာနိုင်သည်)
-        await fetch(this.action, { method: 'POST' });
+        // Install request with explicit AJAX headers so backend returns JSON status.
+        const res = await fetch(this.action, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }
+        });
+        let json = {};
+        try { json = await res.json(); } catch (_) {}
+        if (!res.ok || !json.success) {
+            throw new Error(json.error || `Install failed (HTTP ${res.status})`);
+        }
         
         // Install ပြီးသွားပါက အစိမ်းရောင် အမှန်ခြစ်ပြမည်
         statusText.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 mr-2 text-lg"></i> Xray Installation Complete!';
@@ -466,8 +474,12 @@ document.getElementById('installForm').addEventListener('submit', async function
             window.location.href = '/'; 
         }, 1000);
     } catch (err) {
-        statusText.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-500 mr-2 text-lg"></i> Error occurred during installation.';
-        setTimeout(() => { window.location.reload(); }, 2000);
+        const msg = (err && err.message) ? err.message : 'Error occurred during installation.';
+        statusText.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-red-500 mr-2 text-lg"></i> ${msg}`;
+        btn.innerHTML = '<i class="fa-solid fa-rotate-right mr-2"></i> Retry Install';
+        btn.classList.remove('opacity-80', 'cursor-not-allowed');
+        btn.classList.add('bg-red-500', 'hover:bg-red-600');
+        cancelBtn.classList.remove('hidden');
     }
 });
 
