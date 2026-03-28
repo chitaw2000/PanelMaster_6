@@ -64,6 +64,9 @@
             <div class="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex items-center gap-2.5 shadow-sm"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()"><div class="w-8 h-4 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div></label><span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Live Speed</span></div>
             <form action="/restart_xray/{{ node_id }}" method="POST" class="m-0"><button type="submit" class="bg-white border border-indigo-100 text-indigo-600 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-50 transition shadow-sm"><i class="fa-solid fa-rotate-right mr-1.5"></i> Restart</button></form>
             <form action="/fix_node_logs/{{ node_id }}" method="POST" class="m-0" onsubmit="return confirm('Fix IP Tracker & Enable Logs for this server?');"><button type="submit" class="bg-indigo-50 border border-indigo-100 text-indigo-600 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-100 transition shadow-sm flex items-center justify-center" title="Fix IP Location Tool"><i class="fa-solid fa-wrench mr-1.5"></i> Fix Logs</button></form>
+            <button type="button" onclick="openHardResetModal()" class="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white px-4 py-2.5 rounded-xl text-xs font-black shadow-md transition flex items-center justify-center" title="Delete all keys on this node">
+                <i class="fa-solid fa-skull-crossbones mr-1.5"></i> Hard Reset Keys
+            </button>
             <button onclick="document.getElementById('replaceIdModal').classList.remove('hidden')" class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-md transition"><i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i> Restore</button>
             <form action="/delete_node/{{ node_id }}" method="POST" onsubmit="return confirm('Disconnect this server?');" class="m-0"><button class="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold border border-red-100 hover:border-red-500 transition shadow-sm"><i class="fa-solid fa-link-slash mr-1.5"></i> Disconnect</button></form>
             <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-200 transition"><i class="fa-solid fa-plus mr-2"></i> Add Key</button>
@@ -118,6 +121,35 @@
 <div id="replaceIdModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100"><h2 class="text-xl font-black mb-6 text-slate-800">Restore Server</h2><form action="/replace_id/{{ node_id }}" method="POST"><input type="text" name="old_id" placeholder="Old Node ID (e.g. sg_01)" class="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl mb-8 font-mono text-sm focus:ring-2 focus:ring-amber-100 focus:outline-none" required><div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('replaceIdModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-500">Cancel</button><button class="bg-amber-500 text-white px-6 py-3 rounded-xl font-bold">Restore</button></div></form></div></div>
 
 <div id="addUserModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100"><h2 class="text-xl font-black mb-6 text-slate-800">Generate Keys</h2><form action="/add_user_manual" method="POST"><input type="hidden" name="node_id" value="{{ node_id }}"><div class="bg-slate-50 p-1.5 rounded-2xl mb-5 flex"><select id="creation_mode" name="creation_mode" onchange="toggleMode()" class="w-full bg-transparent p-2 text-sm font-bold text-slate-700 outline-none cursor-pointer"><option value="single">Single Profile</option><option value="list">Bulk List</option><option value="pattern">Auto-Numbering</option></select></div><div id="mode_single" class="block mb-5"><input type="text" name="single_username" placeholder="Username" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm focus:ring-2 focus:ring-indigo-100 outline-none"></div><div id="mode_list" class="hidden mb-5"><textarea name="list_usernames" rows="3" placeholder="Comma separated..." class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm focus:ring-2 focus:ring-indigo-100 outline-none"></textarea></div><div id="mode_pattern" class="hidden mb-5 grid grid-cols-3 gap-3"><input type="text" name="base_name" placeholder="Prefix" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-bold"><input type="number" name="start_num" value="1" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono text-indigo-600"><input type="number" name="qty" value="5" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono text-indigo-600"></div><div class="mb-5"><select name="protocol" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-bold outline-none"><option value="v2">VLESS (WS)</option><option value="out">Shadowsocks</option></select></div><div class="flex gap-4 mb-8"><input type="number" step="0.1" name="total_gb" value="50" placeholder="GB" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-black text-indigo-600 outline-none"><input type="number" name="expire_days" value="30" placeholder="Days" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-black text-indigo-600 outline-none" required></div><div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-500">Cancel</button><button class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold">Generate</button></div></form></div></div>
+
+<div id="hardResetModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[95]">
+    <div class="bg-white rounded-3xl p-8 w-[480px] shadow-2xl border border-red-100">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center text-xl"><i class="fa-solid fa-skull-crossbones"></i></div>
+            <div>
+                <h2 class="text-xl font-black text-slate-900">Hard Reset All Keys</h2>
+                <p class="text-[11px] font-bold text-red-500 uppercase tracking-widest">Danger Zone</p>
+            </div>
+        </div>
+        <p class="text-sm font-bold text-slate-600 leading-relaxed bg-red-50 border border-red-100 rounded-xl p-4 mb-5">
+            This will delete <span class="text-red-600">all keys</span> on this node (Shadowsocks + VLESS clients) and restart Xray.
+        </p>
+        <div class="mb-6">
+            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">
+                Type <span class="text-red-600">RESET {{ node_id }}</span> to continue
+            </label>
+            <input id="hardResetInput" type="text" placeholder="RESET {{ node_id }}" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-red-100 focus:border-red-300">
+        </div>
+        <form id="hardResetForm" action="/hard_reset_node_keys/{{ node_id }}" method="POST">
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="closeHardResetModal()" class="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button>
+                <button type="submit" class="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white px-6 py-2.5 rounded-xl font-black shadow-md transition">
+                    <i class="fa-solid fa-triangle-exclamation mr-1.5"></i> Confirm Reset
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <!-- 🚀 THE FIX: Advanced Edit Profile Modal -->
 <div id="m" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[80] transition-all">
@@ -230,6 +262,14 @@ function openRenew(u){document.getElementById('ru').innerText=u;document.getElem
 function closeRenew(){document.getElementById('rm').classList.add('hidden');}
 function submitToggle(u){let f=document.getElementById('actionToggleForm');f.action='/toggle_user/'+u;f.submit();}
 function submitDelete(u){let f=document.getElementById('actionDeleteForm');f.action='/delete_user/'+u;f.submit();}
+function openHardResetModal(){const m=document.getElementById('hardResetModal');if(m){document.getElementById('hardResetInput').value='';m.classList.remove('hidden');}}
+function closeHardResetModal(){const m=document.getElementById('hardResetModal');if(m)m.classList.add('hidden');}
+document.getElementById('hardResetForm')?.addEventListener('submit', function(e){
+    const expected='RESET {{ node_id }}';
+    const v=(document.getElementById('hardResetInput')?.value||'').trim();
+    if(v!==expected){e.preventDefault();alert('Confirmation text does not match.');return;}
+    if(!confirm('Final confirmation: delete ALL keys on {{ node_id }}?')){e.preventDefault();}
+});
 
 async function openIpModal(username) {
     document.getElementById('ipModalUser').innerText = username;

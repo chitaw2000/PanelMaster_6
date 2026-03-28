@@ -1011,6 +1011,46 @@ def restart_xray_action(node_id):
         execute_ssh_bg(ip, ["systemctl restart xray"])
     return redirect(request.referrer)
 
+@app.route('/hard_reset_node_keys/<node_id>', methods=['POST'])
+def hard_reset_node_keys(node_id):
+    ip = get_target_ip(node_id)
+    if not ip:
+        return redirect(request.referrer or url_for('dashboard'))
+
+    # Emergency destructive action:
+    # - remove all SS out-* inbounds
+    # - clear all VLESS clients from vless-inbound
+    # - cleanup related UFW rules
+    cleanup_cmd = (
+        "bash -lc '"
+        "CFG=/usr/local/etc/xray/config.json; "
+        "[ -f \"$CFG\" ] || exit 1; "
+        "for p in $(jq -r '.inbounds[]? | select((.tag//\"\")|startswith(\"out-\")) | .port // empty' \"$CFG\"); do "
+        "ufw delete allow ${p}/tcp >/dev/null 2>&1 || true; "
+        "ufw delete allow ${p}/udp >/dev/null 2>&1 || true; "
+        "done; "
+        "python3 - <<\"PY\"\n"
+        "import json\n"
+        "p='/usr/local/etc/xray/config.json'\n"
+        "with open(p,'r') as f:\n"
+        "    d=json.load(f)\n"
+        "d['inbounds']=[i for i in d.get('inbounds',[]) if not str(i.get('tag','')).startswith('out-')]\n"
+        "for i in d.get('inbounds',[]):\n"
+        "    if str(i.get('tag','')) == 'vless-inbound':\n"
+        "        s=i.get('settings') or {}\n"
+        "        if isinstance(s,dict) and isinstance(s.get('clients'),list):\n"
+        "            s['clients']=[]\n"
+        "            i['settings']=s\n"
+        "with open(p,'w') as f:\n"
+        "    json.dump(d,f,indent=4)\n"
+        "PY\n"
+        "systemctl reset-failed xray >/dev/null 2>&1 || true; "
+        "systemctl restart xray"
+        "'"
+    )
+    execute_ssh_bg(str(ip).strip(), [cleanup_cmd])
+    return redirect(request.referrer or f"/node/{node_id}")
+
 @app.route('/toggle_node/<node_id>', methods=['POST'])
 def toggle_node(node_id):
     config = load_config()
