@@ -92,7 +92,8 @@ def suspend_user_everywhere(username, uinfo):
         except Exception:
             subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    return total_targets > 0 and ok_count > 0
+    # Enforced only when deletion succeeds on every reachable target node.
+    return total_targets > 0 and ok_count == total_targets
 
 def query_ip_user_totals(ip):
     totals = {}
