@@ -457,7 +457,8 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
                         "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
                     }
 
-                user_keys[uinfo['token']] = k
+                # Sub-panel side matches by username (not master internal token).
+                user_keys[uname] = k
 
         if not user_keys: return 
 
