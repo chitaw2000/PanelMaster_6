@@ -111,6 +111,9 @@
                 <span class="text-xs font-mono font-bold text-slate-400 mb-6 flex items-center gap-1.5">
                     <i class="fa-solid fa-globe text-purple-300"></i> {{ s.ip }}
                 </span>
+                <div id="ping_{{ s.id }}" class="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-500 mb-6">
+                    <i class="fa-solid fa-wave-square"></i> Ping: ...
+                </div>
                 
                 <div class="mb-4 grid grid-cols-3 gap-2">
                     <form action="/restart_xray/{{ s.id }}" method="POST" class="m-0">
@@ -777,6 +780,36 @@ function submitDelete(u) {
     f.action = '/delete_user/' + u;
     f.submit();
 }
+
+async function refreshServerPing(nodeId) {
+    const el = document.getElementById('ping_' + nodeId);
+    if (!el) return;
+    try {
+        const res = await fetch('/api/ping/' + encodeURIComponent(nodeId));
+        const json = await res.json();
+        if (json.status === 'online') {
+            const value = (typeof json.latency_ms === 'number') ? `${json.latency_ms} ms` : 'Online';
+            el.className = 'inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-600 mb-6';
+            el.innerHTML = `<i class="fa-solid fa-wave-square"></i> Ping: ${value}`;
+        } else {
+            el.className = 'inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-red-100 bg-red-50 text-red-600 mb-6';
+            el.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Ping: Offline';
+        }
+    } catch (e) {
+        el.className = 'inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-red-100 bg-red-50 text-red-600 mb-6';
+        el.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Ping: Error';
+    }
+}
+
+function refreshAllServerPings() {
+    const nodeIds = [{% for s in server_stats %}'{{ s.id }}'{% if not loop.last %}, {% endif %}{% endfor %}];
+    nodeIds.forEach(refreshServerPing);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    refreshAllServerPings();
+    setInterval(refreshAllServerPings, 20000);
+});
 </script>
 </body>
 </html>

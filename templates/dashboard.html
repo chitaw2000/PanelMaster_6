@@ -91,7 +91,10 @@
                         <span class="h-{{ node.health }} text-[10px] font-black uppercase flex items-center gap-1.5"><i class="fa-solid fa-circle text-[8px]"></i> {{ node.health }}</span>
                     </div>
                     <h2 class="text-2xl font-black text-slate-800 mb-1.5 truncate pr-24">{{ node.name }}</h2>
-                    <p class="text-sm font-mono font-bold text-slate-400 mb-6 truncate flex items-center gap-1.5"><i class="fa-solid fa-globe text-blue-400"></i> {{ node.ip }}</p>
+                    <p class="text-sm font-mono font-bold text-slate-400 mb-3 truncate flex items-center gap-1.5"><i class="fa-solid fa-globe text-blue-400"></i> {{ node.ip }}</p>
+                    <div id="ping_{{ node.id }}" class="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-500 mb-6">
+                        <i class="fa-solid fa-wave-square"></i> Ping: ...
+                    </div>
                     <div class="flex items-center justify-between bg-slate-50 rounded-2xl p-4 mb-6 border border-slate-100">
                         <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Total Keys</p><p class="text-xl font-black text-slate-700">{{ node.total }}</p></div>
                         <div class="w-px h-8 bg-slate-200"></div>
@@ -466,6 +469,36 @@ document.getElementById('installForm').addEventListener('submit', async function
         statusText.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-500 mr-2 text-lg"></i> Error occurred during installation.';
         setTimeout(() => { window.location.reload(); }, 2000);
     }
+});
+
+async function refreshNodePing(nodeId) {
+    const el = document.getElementById('ping_' + nodeId);
+    if (!el) return;
+    try {
+        const res = await fetch('/api/ping/' + encodeURIComponent(nodeId));
+        const json = await res.json();
+        if (json.status === 'online') {
+            const value = (typeof json.latency_ms === 'number') ? `${json.latency_ms} ms` : 'Online';
+            el.className = 'inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-600 mb-6';
+            el.innerHTML = `<i class="fa-solid fa-wave-square"></i> Ping: ${value}`;
+        } else {
+            el.className = 'inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-red-100 bg-red-50 text-red-600 mb-6';
+            el.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Ping: Offline';
+        }
+    } catch (e) {
+        el.className = 'inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-red-100 bg-red-50 text-red-600 mb-6';
+        el.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Ping: Error';
+    }
+}
+
+function refreshAllNodePings() {
+    const nodeIds = [{% for node in nodes %}'{{ node.id }}'{% if not loop.last %}, {% endif %}{% endfor %}];
+    nodeIds.forEach(refreshNodePing);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    refreshAllNodePings();
+    setInterval(refreshAllNodePings, 20000);
 });
 </script>
 </body>

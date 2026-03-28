@@ -316,6 +316,7 @@ def group_view(group_id):
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
     db_changed = False
+    changed_users_by_node = {}
     cmds_by_ip = {}
     
     for uname, info in db.items():
@@ -342,6 +343,7 @@ def group_view(group_id):
                 if info.get('key') != expected_key:
                     info['key'] = expected_key
                     db_changed = True
+                    changed_users_by_node.setdefault(nid, set()).add(uname)
                     if not info.get('is_blocked', False):
                         cmds_by_ip.setdefault(node_ip, []).append(cmd)
             
@@ -369,6 +371,14 @@ def group_view(group_id):
     if db_changed:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+        for changed_nid, changed_users in changed_users_by_node.items():
+            changed_ip = get_target_ip(changed_nid)
+            if changed_ip and changed_users:
+                threading.Thread(
+                    target=sync_new_node_to_subpanel,
+                    args=(group_id, changed_nid, str(changed_ip).strip(), list(changed_users)),
+                    daemon=True
+                ).start()
     for ip, cmds in cmds_by_ip.items():
         prefix = "systemctl() { true; }; export -f systemctl; "
         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
@@ -396,16 +406,19 @@ def group_view(group_id):
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats, group_used_gb=group_used_gb)
 
-def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
-    time.sleep(3) 
+def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames=None):
+    time.sleep(2)
     try:
         with db_lock:
             if not os.path.exists(USERS_DB): return
             with open(USERS_DB, 'r') as f: db = json.load(f)
 
+        only_set = set(only_usernames or [])
         user_keys = {}
         for uname, uinfo in db.items():
             if isinstance(uinfo, dict) and uinfo.get('group') == group_id and uinfo.get('token'):
+                if only_set and uname not in only_set:
+                    continue
                 uid = uinfo.get('uuid')
                 port = uinfo.get('port')
                 proto = uinfo.get('protocol', 'v2')
@@ -433,7 +446,21 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
         }
         
         headers = {"Content-Type": "application/json", "x-api-key": MASTER_API_KEY}
-        requests.post("http://167.172.91.222:4000/api/internal/sync-new-server", json=payload, headers=headers, timeout=10)
+        urls = [
+            "http://167.172.91.222:4000/api/internal/sync-new-server",
+            "http://167.172.91.222:4000/admin/api/internal/sync-new-server"
+        ]
+        delivered = False
+        for url in urls:
+            try:
+                r = requests.post(url, json=payload, headers=headers, timeout=10)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+                    break
+            except Exception:
+                pass
+        if not delivered:
+            print(f"Sync New Server Error: delivery failed for {group_id}/{new_node_id}")
         
     except Exception as e:
         print(f"Sync New Server Error: {e}")
@@ -722,12 +749,14 @@ def replace_id(current_id):
                         f.write(line)
                     
     groups = load_auto_groups()
+    replaced_group_id = ""
     for gid, gdata in groups.items():
         if current_id in gdata.get("nodes", {}):
             ndata = gdata["nodes"][current_id]
             del groups[gid]["nodes"][current_id]
             groups[gid]["nodes"][old_id] = ndata
             save_auto_groups(groups)
+            replaced_group_id = gid
             break
             
     new_ip = get_target_ip(old_id)
@@ -768,6 +797,12 @@ def replace_id(current_id):
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             execute_ssh_bg(new_ip, [prefix + " ; ".join(cmds_to_sync) + suffix])
+        if replaced_group_id:
+            threading.Thread(
+                target=sync_new_node_to_subpanel,
+                args=(replaced_group_id, old_id, str(new_ip).strip()),
+                daemon=True
+            ).start()
             
     return redirect(f'/node/{old_id}')
 
@@ -800,6 +835,34 @@ def check_xray(node_id):
     except: 
         pass
     return jsonify({"status": "inactive"})
+
+@app.route('/api/ping/<node_id>')
+def api_ping(node_id):
+    ip = get_target_ip(node_id)
+    if not ip:
+        return jsonify({"status": "offline", "msg": "IP not found"})
+
+    ip = str(ip).strip()
+    try:
+        # Linux ping format example: time=12.3 ms
+        res = subprocess.run(
+            f"ping -c 1 -W 2 {ip}",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=4
+        )
+        if res.returncode != 0:
+            return jsonify({"status": "offline"})
+
+        out = (res.stdout or "") + "\n" + (res.stderr or "")
+        m = re.search(r"time[=<]\s*([0-9.]+)\s*ms", out)
+        if m:
+            latency_ms = float(m.group(1))
+            return jsonify({"status": "online", "latency_ms": round(latency_ms, 2)})
+        return jsonify({"status": "online"})
+    except Exception as e:
+        return jsonify({"status": "offline", "msg": str(e)})
 
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):
