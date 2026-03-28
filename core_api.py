@@ -83,6 +83,33 @@ def collect_usage_delta(ip, username, last_raw_bytes):
     except Exception:
         return 0.0, float(last_raw_bytes or 0.0)
 
+def resolve_user_node_ids(groups, group_id, target_node):
+    """
+    Resolve all node IDs that should receive user actions (suspend/resume/delete).
+    Handles bad/missing group_id by falling back to the active node and by
+    discovering the real group from current node membership.
+    """
+    node_ids = []
+    if group_id:
+        node_ids = list((groups.get(group_id, {}) or {}).get("nodes", {}).keys())
+
+    # Fallback: infer group by target node membership.
+    if not node_ids and target_node:
+        target_norm = str(target_node).strip().lower()
+        for _, gdata in groups.items():
+            g_nodes = (gdata or {}).get("nodes", {})
+            for nid in g_nodes.keys():
+                if str(nid).strip().lower() == target_norm:
+                    node_ids = list(g_nodes.keys())
+                    break
+            if node_ids:
+                break
+
+    # Final fallback: at least apply on current active node.
+    if not node_ids and target_node:
+        node_ids = [target_node]
+    return node_ids
+
 @api_bp.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -323,6 +350,7 @@ def api_user_action():
         port = uinfo.get('port')
         uid = uinfo.get('uuid')
         group_id = uinfo.get('group')
+        proto = uinfo.get('protocol', 'out')
 
         if action == "suspend": uinfo['is_blocked'] = True
         elif action == "resume": uinfo['is_blocked'] = False
@@ -331,22 +359,25 @@ def api_user_action():
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
     groups = load_auto_groups()
-    if action == "resume" and group_id:
-        g_nodes = groups.get(group_id, {}).get("nodes", {})
-    else:
-        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+    target_node_ids = resolve_user_node_ids(groups, group_id, target_node)
 
-    for nid in g_nodes:
+    for nid in target_node_ids:
         nip = get_target_ip(nid)
         if not nip: continue
         nip = str(nip).strip()
 
         if action in ["suspend", "delete"]:
-            cmd_del = get_safe_delete_cmd(username, 'out', port)
-            cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+            if proto == 'v2':
+                cmd_full_del = f"{cmd_del} ; systemctl restart xray"
+            else:
+                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
             fire_ssh_bg(nip, cmd_full_del)
         elif action == "resume":
-            if group_id:
+            if proto == 'v2':
+                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
+                fire_ssh_bg(nip, cmd_add)
+            elif group_id:
                 cmd_add = f"{get_safe_add_out_cmd(username, uid, port)} ; systemctl restart xray"
                 fire_ssh_bg(nip, cmd_add)
             elif nip == active_ip:
@@ -388,8 +419,8 @@ def api_internal_delete_user():
             json.dump(db, f, indent=4)
 
     groups = load_auto_groups()
-    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
-    for nid in g_nodes:
+    target_node_ids = resolve_user_node_ids(groups, group_id, target_node)
+    for nid in target_node_ids:
         nip = get_target_ip(nid)
         if not nip:
             continue
