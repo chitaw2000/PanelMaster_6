@@ -17,13 +17,12 @@ from core_api import api_bp
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
-ACTIVITY_LOG_FILE = "/root/PanelMaster/dashboard_activity_log.json"
+ACTIVITY_LOG_FILE = os.path.join(BACKUP_DIR, "dashboard_activity_log.json")
+ACTIVITY_LOG_LOCK = threading.Lock()
 MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 if not os.path.exists(BACKUP_DIR): 
     os.makedirs(BACKUP_DIR)
-if not os.path.exists(os.path.dirname(ACTIVITY_LOG_FILE)):
-    os.makedirs(os.path.dirname(ACTIVITY_LOG_FILE), exist_ok=True)
 
 # 🚀 API Routes များကို Flask ထဲသို့ ပေါင်းထည့်ခြင်း
 app.register_blueprint(api_bp)
@@ -110,6 +109,26 @@ def measure_ping_latency_ms(ip):
     except Exception:
         return None
 
+def _append_activity_log(entry):
+    if not ACTIVITY_LOG_LOCK.acquire(blocking=False):
+        return
+    try:
+        history = []
+        if os.path.exists(ACTIVITY_LOG_FILE):
+            try:
+                with open(ACTIVITY_LOG_FILE, 'r') as f:
+                    history = json.load(f)
+            except Exception:
+                history = []
+        history.insert(0, entry)
+        history = history[:500]
+        with open(ACTIVITY_LOG_FILE, 'w') as f:
+            json.dump(history, f, indent=2)
+    except Exception:
+        pass
+    finally:
+        ACTIVITY_LOG_LOCK.release()
+
 def log_activity(action, details="", level="info"):
     try:
         entry = {
@@ -118,18 +137,8 @@ def log_activity(action, details="", level="info"):
             "details": str(details or "").strip(),
             "level": str(level or "info").strip().lower()
         }
-        with db_lock:
-            history = []
-            if os.path.exists(ACTIVITY_LOG_FILE):
-                try:
-                    with open(ACTIVITY_LOG_FILE, 'r') as f:
-                        history = json.load(f)
-                except Exception:
-                    history = []
-            history.insert(0, entry)
-            history = history[:500]
-            with open(ACTIVITY_LOG_FILE, 'w') as f:
-                json.dump(history, f, indent=2)
+        # Keep business routes fast: never block request flow for logging.
+        threading.Thread(target=_append_activity_log, args=(entry,), daemon=True).start()
     except Exception:
         pass
 
@@ -1547,7 +1556,7 @@ def config_action():
 @app.route('/clear_activity_logs', methods=['POST'])
 def clear_activity_logs():
     try:
-        with db_lock:
+        with ACTIVITY_LOG_LOCK:
             with open(ACTIVITY_LOG_FILE, 'w') as f:
                 json.dump([], f, indent=2)
     except Exception:
