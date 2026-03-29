@@ -1074,6 +1074,85 @@ def api_ping(node_id):
         return jsonify({"status": "offline"})
     return jsonify({"status": "online", "latency_ms": latency_ms})
 
+@app.route('/api/search_all')
+def api_search_all():
+    q = str(request.args.get('q', '')).strip()
+    if len(q) < 1:
+        return jsonify({"status": "ok", "query": q, "groups": [], "nodes": [], "users": []})
+
+    ql = q.lower()
+    groups = load_auto_groups()
+    all_nodes = get_all_servers()
+    with db_lock:
+        db = {}
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f:
+                    db = json.load(f)
+            except Exception:
+                db = {}
+
+    group_results = []
+    for gid, gdata in groups.items():
+        gname = str(gdata.get("name", gid))
+        if ql in gid.lower() or ql in gname.lower():
+            group_results.append({
+                "id": gid,
+                "name": gname,
+                "url": f"/group/{gid}",
+                "node_count": len(gdata.get("nodes", {}))
+            })
+    group_results = group_results[:20]
+
+    node_results = []
+    for nid, ninfo in all_nodes.items():
+        nname = str(ninfo.get("name", nid))
+        nip = str(ninfo.get("ip", ""))
+        if ql in nid.lower() or ql in nname.lower() or ql in nip.lower():
+            node_results.append({
+                "id": nid,
+                "name": nname,
+                "ip": nip,
+                "url": f"/node/{nid}"
+            })
+    node_results = node_results[:30]
+
+    user_results = []
+    for uname, uinfo in db.items():
+        if not isinstance(uinfo, dict):
+            continue
+        node_id = str(uinfo.get("node", "")).strip()
+        group_id = str(uinfo.get("group", "")).strip()
+        text_blob = " ".join([
+            uname,
+            str(uinfo.get("key_id", "")),
+            str(uinfo.get("protocol", "")),
+            node_id,
+            group_id,
+            str(uinfo.get("port", ""))
+        ]).lower()
+        if ql in text_blob:
+            used_gb = float(uinfo.get("used_bytes", 0) or 0) / (1024 ** 3)
+            total_gb = float(uinfo.get("total_gb", 0) or 0)
+            user_results.append({
+                "username": uname,
+                "node": node_id,
+                "group": group_id,
+                "blocked": bool(uinfo.get("is_blocked", False)),
+                "used_gb": round(used_gb, 2),
+                "total_gb": total_gb,
+                "url": f"/node/{node_id}"
+            })
+    user_results = user_results[:80]
+
+    return jsonify({
+        "status": "ok",
+        "query": q,
+        "groups": group_results,
+        "nodes": node_results,
+        "users": user_results
+    })
+
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):
     ip = get_target_ip(node_id)
