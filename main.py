@@ -10,6 +10,13 @@ from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cm
 from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
 from core_ip import get_active_ips
+from core_backup import (
+    list_backups,
+    safe_backup_path,
+    create_node_backup_snapshot,
+    create_full_backup_snapshot,
+    read_backup_json,
+)
 
 # 🚀 API Blueprint ကို လှမ်းခေါ်ခြင်း
 from core_api import api_bp
@@ -218,20 +225,34 @@ def reset_node_traffic(node_id):
             with open(NODES_DB, 'w') as f: json.dump(ndb, f)
     return redirect(request.referrer)
 
-def get_node_backups():
-    backups = {}
-    if os.path.exists(BACKUP_DIR):
-        for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
-            if f.endswith('.json') and f.startswith("backup_"):
-                parts = f.split('_')
-                if len(parts) >= 3:
-                    nid = parts[1]
-                    if nid not in backups: backups[nid] = []
-                    path = os.path.join(BACKUP_DIR, f)
-                    size = os.path.getsize(path) / 1024
-                    ctime = datetime.fromtimestamp(os.path.getctime(path)).strftime('%Y-%m-%d %I:%M %p')
-                    backups[nid].append({"filename": f, "size": f"{size:.1f} KB", "time": ctime})
-    return backups
+def build_keys_and_sync_cmds(db):
+    cmds_by_ip = {}
+    for uname, uinfo in db.items():
+        if not isinstance(uinfo, dict):
+            continue
+        node_id = uinfo.get('node')
+        node_ip = get_target_ip(node_id)
+        if not node_ip:
+            continue
+        node_ip = str(node_ip).strip()
+        uid = uinfo.get('uuid')
+        port = uinfo.get('port')
+        proto = uinfo.get('protocol', 'v2')
+        safe_u = urllib.parse.quote(uname)
+
+        if proto == 'v2':
+            expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+            cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+        else:
+            credentials = f"chacha20-ietf-poly1305:{uid}"
+            b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+            expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
+            cmd = get_safe_add_out_cmd(uname, uid, port)
+
+        uinfo['key'] = expected_key
+        if not uinfo.get('is_blocked', False):
+            cmds_by_ip.setdefault(node_ip, []).append(cmd)
+    return cmds_by_ip
 
 @app.route('/')
 def dashboard():
@@ -307,7 +328,9 @@ def dashboard():
         api_domain = gdata.get("api_domain", "")
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "api_domain": api_domain, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
-    raw_backups = get_node_backups()
+    backup_inventory = list_backups(BACKUP_DIR)
+    raw_backups = backup_inventory.get("node_backups", {})
+    full_backups = backup_inventory.get("full_backups", [])
     custom_backups = {}
     auto_backups = {}
     orphaned_backups = {}
@@ -315,15 +338,25 @@ def dashboard():
     auto_nids_map = {}
     for gid, gdata in auto_groups.items():
         auto_backups[gid] = {"name": gdata.get('name', gid), "nodes": {}}
-        for nid in gdata.get('nodes', {}).keys():
-            auto_nids_map[nid] = gid
+        for nid, ninfo in gdata.get('nodes', {}).items():
+            ip = str(ninfo.get('ip')).strip() if isinstance(ninfo, dict) else str(ninfo).strip()
+            auto_nids_map[nid] = {
+                "gid": gid,
+                "name": all_servers.get(nid, {}).get('name', nid),
+                "ip": ip
+            }
             
     for nid, files in raw_backups.items():
         if nid in nodes:
-            custom_backups[nid] = {"name": nodes[nid].get('name', nid), "files": files}
+            custom_backups[nid] = {"name": nodes[nid].get('name', nid), "ip": nodes[nid].get('ip', ''), "files": files}
         elif nid in auto_nids_map:
-            gid = auto_nids_map[nid]
-            auto_backups[gid]["nodes"][nid] = files
+            nmeta = auto_nids_map[nid]
+            gid = nmeta["gid"]
+            auto_backups[gid]["nodes"][nid] = {
+                "name": nmeta["name"],
+                "ip": nmeta["ip"],
+                "files": files
+            }
         else:
             orphaned_backups[nid] = files
             
@@ -337,6 +370,7 @@ def dashboard():
         custom_backups=custom_backups,
         auto_backups=auto_backups,
         orphaned_backups=orphaned_backups,
+        full_backups=full_backups,
         sick_nodes=sick_nodes,
         sick_count=sick_count,
         activity_logs=activity_logs[:200]
@@ -842,6 +876,7 @@ def node_view(node_id):
     
     node_ping_ms = measure_ping_latency_ms(node_ip)
     node_ping_status = "online" if node_ping_ms is not None else "offline"
+    node_backups = list_backups(BACKUP_DIR).get("node_backups", {}).get(node_id, [])
 
     return render_template(
         'node.html',
@@ -856,7 +891,8 @@ def node_view(node_id):
         is_alarm=is_alarm,
         health=health,
         node_ping_ms=node_ping_ms,
-        node_ping_status=node_ping_status
+        node_ping_status=node_ping_status,
+        node_backups=node_backups
     )
 
 @app.route('/add_node', methods=['POST'])
@@ -1410,35 +1446,95 @@ def bulk_delete_route():
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
 def create_node_backup(node_id):
     if os.path.exists(USERS_DB):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"backup_{node_id}_{timestamp}.json"
-        node_data = {}
         with db_lock:
-            with open(USERS_DB, 'r') as f: 
+            with open(USERS_DB, 'r') as f:
                 db = json.load(f)
-            for uname, info in db.items():
-                if isinstance(info, dict) and info.get('node') == node_id: 
-                    node_data[uname] = info
-        if node_data:
-            with open(os.path.join(BACKUP_DIR, backup_name), 'w') as f: 
-                json.dump(node_data, f, indent=4)
-            log_activity("Create Node Backup", f"node={node_id} users={len(node_data)}", "info")
+        filename, user_count = create_node_backup_snapshot(BACKUP_DIR, node_id, db)
+        log_activity("Create Node Backup", f"node={node_id} users={user_count} file={filename}", "info")
     return redirect(request.referrer)
 
 @app.route('/download_backup/<filename>')
 def download_backup(filename):
-    path = os.path.join(BACKUP_DIR, filename)
+    path = safe_backup_path(BACKUP_DIR, filename)
+    if not path:
+        return redirect(request.referrer or url_for('dashboard'))
     if os.path.exists(path): 
         return send_file(path, as_attachment=True)
     return redirect(request.referrer)
 
 @app.route('/delete_backup/<filename>', methods=['POST'])
 def delete_backup(filename):
-    path = os.path.join(BACKUP_DIR, filename)
+    path = safe_backup_path(BACKUP_DIR, filename)
+    if not path:
+        return redirect(request.referrer or url_for('dashboard'))
     if os.path.exists(path): 
         os.remove(path)
         log_activity("Delete Backup", f"file={filename}", "warning")
     return redirect(request.referrer)
+
+@app.route('/restore_node_backup/<filename>', methods=['POST'])
+def restore_node_backup(filename):
+    path = safe_backup_path(BACKUP_DIR, filename)
+    if not path or not os.path.exists(path):
+        return redirect(request.referrer or url_for('dashboard'))
+
+    try:
+        payload = read_backup_json(path)
+    except Exception:
+        return redirect(request.referrer or url_for('dashboard'))
+
+    target_node = str(request.form.get('node_id', '')).strip()
+    if not target_node and isinstance(payload, dict):
+        target_node = str(payload.get('node_id', '')).strip()
+    if not target_node:
+        return redirect(request.referrer or url_for('dashboard'))
+
+    restore_users = {}
+    if isinstance(payload, dict) and payload.get('type') == 'node_backup':
+        restore_users = payload.get('users', {}) or {}
+    elif isinstance(payload, dict):
+        # Legacy node backup format (raw users dict)
+        restore_users = payload
+
+    if not isinstance(restore_users, dict):
+        return redirect(request.referrer or url_for('dashboard'))
+
+    with db_lock:
+        db = {}
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f:
+                    db = json.load(f)
+            except Exception:
+                db = {}
+
+        users_to_delete = [
+            uname for uname, info in db.items()
+            if isinstance(info, dict) and str(info.get('node', '')).strip() == target_node
+        ]
+        for uname in users_to_delete:
+            del db[uname]
+
+        restored_count = 0
+        for uname, uinfo in restore_users.items():
+            if not isinstance(uinfo, dict):
+                continue
+            c = dict(uinfo)
+            c['node'] = target_node
+            db[uname] = c
+            restored_count += 1
+
+        cmds_by_ip = build_keys_and_sync_cmds(db)
+        with open(USERS_DB, 'w') as f:
+            json.dump(db, f, indent=4)
+
+    for ip, cmds in cmds_by_ip.items():
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
+
+    log_activity("Restore Node Backup", f"node={target_node} users={restored_count} file={filename}", "success")
+    return redirect(request.referrer or f"/node/{target_node}")
 
 @app.route('/purge_node/<node_id>', methods=['POST'])
 def purge_node(node_id):
@@ -1454,16 +1550,115 @@ def purge_node(node_id):
                 
     if os.path.exists(BACKUP_DIR):
         for f in os.listdir(BACKUP_DIR):
-            if f.startswith(f"backup_{node_id}_"): 
+            if f.startswith(f"backup_{node_id}_") or f.startswith(f"node_backup__{node_id}__"):
                 os.remove(os.path.join(BACKUP_DIR, f))
     log_activity("Purge Node Data", f"node={node_id}", "error")
     return redirect(request.referrer)
 
 @app.route('/download_backup_global')
 def download_backup_global():
-    if os.path.exists(USERS_DB): 
+    # Legacy endpoint: keep compatibility.
+    if os.path.exists(USERS_DB):
         return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
     return "No DB found."
+
+@app.route('/create_full_backup', methods=['POST'])
+def create_full_backup():
+    with db_lock:
+        users_db = {}
+        nodes_db = {}
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f:
+                    users_db = json.load(f)
+            except Exception:
+                users_db = {}
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f:
+                    nodes_db = json.load(f)
+            except Exception:
+                nodes_db = {}
+
+    auto_groups = load_auto_groups()
+    cfg = load_config()
+    nodes_list_raw = ""
+    if os.path.exists(NODES_LIST):
+        try:
+            with open(NODES_LIST, 'r') as f:
+                nodes_list_raw = f.read()
+        except Exception:
+            nodes_list_raw = ""
+
+    payload = {
+        "type": "full_backup",
+        "version": 1,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "data": {
+            "users_db": users_db,
+            "nodes_db": nodes_db,
+            "auto_groups": auto_groups,
+            "config": cfg,
+            "nodes_list": nodes_list_raw,
+        }
+    }
+    filename = create_full_backup_snapshot(BACKUP_DIR, payload)
+    log_activity("Create Full Backup", f"file={filename} users={len(users_db)}", "info")
+    return redirect(request.referrer or url_for('dashboard'))
+
+@app.route('/restore_full_backup/<filename>', methods=['POST'])
+def restore_full_backup(filename):
+    path = safe_backup_path(BACKUP_DIR, filename)
+    if not path or not os.path.exists(path):
+        return redirect(request.referrer or url_for('dashboard'))
+
+    try:
+        payload = read_backup_json(path)
+    except Exception:
+        return redirect(request.referrer or url_for('dashboard'))
+
+    if not isinstance(payload, dict) or payload.get("type") != "full_backup":
+        return redirect(request.referrer or url_for('dashboard'))
+
+    data = payload.get("data", {}) or {}
+    users_db = data.get("users_db", {})
+    nodes_db = data.get("nodes_db", {})
+    auto_groups = data.get("auto_groups", {})
+    cfg = data.get("config", {})
+    nodes_list_raw = data.get("nodes_list", "")
+
+    if not isinstance(users_db, dict):
+        return redirect(request.referrer or url_for('dashboard'))
+
+    with db_lock:
+        with open(USERS_DB, 'w') as f:
+            json.dump(users_db, f, indent=4)
+        if isinstance(nodes_db, dict):
+            with open(NODES_DB, 'w') as f:
+                json.dump(nodes_db, f, indent=4)
+
+    if isinstance(auto_groups, dict):
+        save_auto_groups(auto_groups)
+    if isinstance(cfg, dict):
+        save_config(cfg)
+    if isinstance(nodes_list_raw, str):
+        with open(NODES_LIST, 'w') as f:
+            f.write(nodes_list_raw)
+
+    with db_lock:
+        with open(USERS_DB, 'r') as f:
+            rebuilt_db = json.load(f)
+        cmds_by_ip = build_keys_and_sync_cmds(rebuilt_db)
+        with open(USERS_DB, 'w') as f:
+            json.dump(rebuilt_db, f, indent=4)
+
+    for ip, cmds in cmds_by_ip.items():
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
+
+    log_activity("Restore Full Backup", f"file={filename} users={len(users_db)}", "success")
+    return redirect(url_for('dashboard'))
 
 @app.route('/upload_backup', methods=['POST'])
 def upload_backup():
@@ -1472,6 +1667,48 @@ def upload_backup():
     
     try:
         uploaded_data = json.load(file)
+
+        # Full backup upload support
+        if isinstance(uploaded_data, dict) and uploaded_data.get("type") == "full_backup":
+            data = uploaded_data.get("data", {}) or {}
+            users_db = data.get("users_db", {})
+            nodes_db = data.get("nodes_db", {})
+            auto_groups = data.get("auto_groups", {})
+            cfg = data.get("config", {})
+            nodes_list_raw = data.get("nodes_list", "")
+
+            if not isinstance(users_db, dict):
+                return redirect(url_for('dashboard'))
+
+            with db_lock:
+                with open(USERS_DB, 'w') as f:
+                    json.dump(users_db, f, indent=4)
+                if isinstance(nodes_db, dict):
+                    with open(NODES_DB, 'w') as f:
+                        json.dump(nodes_db, f, indent=4)
+
+            if isinstance(auto_groups, dict):
+                save_auto_groups(auto_groups)
+            if isinstance(cfg, dict):
+                save_config(cfg)
+            if isinstance(nodes_list_raw, str):
+                with open(NODES_LIST, 'w') as f:
+                    f.write(nodes_list_raw)
+
+            with db_lock:
+                with open(USERS_DB, 'r') as f:
+                    rebuilt_db = json.load(f)
+                cmds_by_ip = build_keys_and_sync_cmds(rebuilt_db)
+                with open(USERS_DB, 'w') as f:
+                    json.dump(rebuilt_db, f, indent=4)
+
+            for ip, cmds in cmds_by_ip.items():
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
+
+            log_activity("Restore Full Backup Upload", f"users={len(users_db)}", "success")
+            return redirect(url_for('dashboard'))
         
         with db_lock:
             db = {}
@@ -1483,31 +1720,7 @@ def upload_backup():
             for uname, uinfo in uploaded_data.items():
                 db[uname] = uinfo
             
-            cmds_by_ip = {}
-            for uname, uinfo in db.items():
-                if not isinstance(uinfo, dict): continue
-                
-                node_id = uinfo.get('node')
-                node_ip = get_target_ip(node_id)
-                if not node_ip: continue
-                
-                uid = uinfo.get('uuid')
-                port = uinfo.get('port')
-                proto = uinfo.get('protocol', 'v2')
-                safe_u = urllib.parse.quote(uname)
-                
-                if proto == 'v2':
-                    expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                    cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
-                else:
-                    credentials = f"chacha20-ietf-poly1305:{uid}"
-                    b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-                    expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
-                    cmd = get_safe_add_out_cmd(uname, uid, port)
-                
-                uinfo['key'] = expected_key
-                if not uinfo.get('is_blocked', False):
-                    cmds_by_ip.setdefault(node_ip, []).append(cmd)
+            cmds_by_ip = build_keys_and_sync_cmds(db)
             
             with open(USERS_DB, 'w') as f:
                 json.dump(db, f, indent=4)

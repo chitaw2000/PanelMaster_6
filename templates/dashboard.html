@@ -141,45 +141,78 @@
         </div>
         
         <div class="overflow-y-auto pr-2 space-y-8 flex-1">
+            <div class="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                    <p class="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Full Backup</p>
+                    <p class="text-xs font-bold text-slate-600 mt-1">Snapshot all configs and databases.</p>
+                </div>
+                <div class="flex gap-2">
+                    <form action="/create_full_backup" method="POST" class="m-0">
+                        <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black">
+                            <i class="fa-solid fa-floppy-disk mr-1"></i> Create Full Backup
+                        </button>
+                    </form>
+                    <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="m-0 flex items-center gap-2">
+                        <input type="file" name="backup_file" accept=".json" required class="text-[10px] font-bold text-slate-500 max-w-[170px]">
+                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-black">
+                            <i class="fa-solid fa-cloud-arrow-up mr-1"></i> Restore Upload
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div>
+                <h3 class="text-xs font-black text-emerald-600 uppercase tracking-widest mb-3 bg-emerald-50 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-emerald-100"><i class="fa-solid fa-hard-drive"></i> Full Backup Files</h3>
+                {% if full_backups %}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {% for f in full_backups %}
+                    <div class="bg-white border border-slate-200 p-3 rounded-xl shadow-sm flex items-center justify-between">
+                        <div class="truncate mr-2">
+                            <p class="text-xs font-black text-slate-700 truncate">{{ f.filename }}</p>
+                            <p class="text-[10px] font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
+                        </div>
+                        <div class="flex gap-1.5 shrink-0">
+                            <a href="/download_backup/{{ f.filename }}" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[10px]"></i></a>
+                            <form action="/restore_full_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Restore FULL backup now?');" class="m-0"><button type="submit" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[10px]"></i></button></form>
+                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[10px]"></i></button></form>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-xs font-bold text-slate-400">No full backup files yet.</p>
+                {% endif %}
+            </div>
+
             {% if custom_backups %}
             <div>
-                <h3 class="text-xs font-black text-blue-600 uppercase tracking-widest mb-3 bg-blue-50 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-blue-100"><i class="fa-solid fa-server"></i> Custom Nodes Backups</h3>
+                <h3 class="text-xs font-black text-blue-600 uppercase tracking-widest mb-3 bg-blue-50 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-blue-100"><i class="fa-solid fa-server"></i> Custom Node Backups</h3>
                 <div class="space-y-3">
                     {% for nid, data in custom_backups.items() %}
                     {% set latest = data.files[0] %}
-                    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                         <div class="px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
-                            <div class="flex items-center gap-4">
-                                <div class="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shadow-inner"><i class="fa-solid fa-database"></i></div>
-                                <div>
-                                    <h4 class="text-sm font-black text-slate-800">{{ data.name }} <span class="text-[10px] text-slate-400 font-mono ml-1 uppercase">({{ nid }})</span></h4>
-                                    <p class="text-[10px] font-bold text-emerald-600 mt-0.5"><i class="fa-regular fa-clock mr-1"></i> Updated: {{ latest.time }}</p>
-                                </div>
+                            <div>
+                                <h4 class="text-sm font-black text-slate-800">{{ data.name }} <span class="text-[10px] text-slate-400 font-mono ml-1 uppercase">({{ nid }})</span></h4>
+                                <p class="text-[10px] font-bold text-slate-500">{{ data.ip }}</p>
+                                <p class="text-[10px] font-bold text-emerald-600 mt-0.5">Latest: {{ latest.time }}</p>
                             </div>
-                            <div class="flex items-center gap-3">
-                                <span class="bg-slate-100 text-slate-600 text-[10px] font-black px-2.5 py-1 rounded-md">{{ data.files|length }} Files</span>
-                                <i class="fa-solid fa-chevron-down text-slate-400"></i>
-                            </div>
+                            <span class="bg-slate-100 text-slate-600 text-[10px] font-black px-2.5 py-1 rounded-md">{{ data.files|length }} Files</span>
                         </div>
-                        <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-slate-50/50 p-5">
-                            <div class="mb-4 flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                                <div><h5 class="text-xs font-black text-red-600">Purge Data</h5><p class="text-[9px] text-slate-500 font-bold">Delete all keys & backups for {{ nid }}</p></div>
-                                <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ Purge all data for Node: {{ nid }}?');" class="m-0"><button type="submit" class="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-black transition-colors border border-red-200 hover:border-red-500">Purge</button></form>
-                            </div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {% for f in data.files %}
-                                <div class="flex items-center justify-between bg-white border {% if loop.index == 1 %}border-emerald-200 shadow-emerald-100/50{% else %}border-slate-200{% endif %} p-3 rounded-xl shadow-sm">
-                                    <div class="truncate mr-3">
-                                        <p class="text-xs font-bold text-slate-700 truncate"><i class="fa-regular fa-file-code text-indigo-400 mr-1.5"></i>{{ f.filename }}</p>
-                                        <p class="text-[9px] font-mono font-bold text-slate-400 mt-1">{{ f.time }} • {{ f.size }} {% if loop.index == 1 %}<span class="text-[8px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded ml-1 uppercase">Latest</span>{% endif %}</p>
-                                    </div>
-                                    <div class="flex gap-1.5 shrink-0">
-                                        <a href="/download_backup/{{ f.filename }}" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[10px]"></i></a>
-                                        <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[10px]"></i></button></form>
-                                    </div>
+                        <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-slate-50/50 p-4 space-y-2">
+                            {% for f in data.files %}
+                            <div class="flex items-center justify-between bg-white border border-slate-200 p-2.5 rounded-lg">
+                                <div class="truncate mr-2">
+                                    <p class="text-[11px] font-bold text-slate-700 truncate">{{ f.filename }}</p>
+                                    <p class="text-[9px] font-mono font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
                                 </div>
-                                {% endfor %}
+                                <div class="flex gap-1 shrink-0">
+                                    <a href="/download_backup/{{ f.filename }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
+                                    <form action="/restore_node_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Restore this node backup to {{ nid }}?');" class="m-0"><input type="hidden" name="node_id" value="{{ nid }}"><button type="submit" class="bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[9px]"></i></button></form>
+                                    <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
+                                </div>
                             </div>
+                            {% endfor %}
                         </div>
                     </div>
                     {% endfor %}
@@ -189,43 +222,37 @@
 
             {% if auto_backups %}
             <div>
-                <h3 class="text-xs font-black text-purple-600 uppercase tracking-widest mb-3 bg-purple-50 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-purple-100"><i class="fa-solid fa-network-wired"></i> Auto Nodes Backups</h3>
+                <h3 class="text-xs font-black text-purple-600 uppercase tracking-widest mb-3 bg-purple-50 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-purple-100"><i class="fa-solid fa-network-wired"></i> Group Node Backups</h3>
                 <div class="space-y-4">
                     {% for gid, gdata in auto_backups.items() %}
                     <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
                         <h4 class="text-sm font-black text-slate-800 mb-4">{{ gdata.name }} <span class="text-[10px] text-slate-400 font-mono ml-1 uppercase">({{ gid }})</span></h4>
                         <div class="space-y-3">
-                            {% for nid, files in gdata.nodes.items() %}
-                            {% set latest = files[0] %}
+                            {% for nid, node_data in gdata.nodes.items() %}
+                            {% set latest = node_data.files[0] %}
                             <div class="border border-slate-200 rounded-xl overflow-hidden">
-                                <div class="px-4 py-3 cursor-pointer bg-slate-50 hover:bg-purple-50 transition-colors flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
-                                    <div class="flex items-center gap-3">
-                                        <div class="w-8 h-8 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center shadow-inner"><i class="fa-solid fa-server text-xs"></i></div>
-                                        <div>
-                                            <h5 class="text-xs font-black text-slate-700 uppercase">{{ nid }}</h5>
-                                            <p class="text-[9px] font-bold text-emerald-600 mt-0.5">Updated: {{ latest.time }}</p>
-                                        </div>
+                                <div class="px-4 py-3 cursor-pointer bg-slate-50 hover:bg-purple-50 transition-colors flex justify-between items-center" onclick="document.getElementById('backup_{{gid}}_{{nid}}').classList.toggle('hidden')">
+                                    <div>
+                                        <h5 class="text-xs font-black text-slate-700 uppercase">{{ node_data.name }} <span class="text-slate-400">({{ nid }})</span></h5>
+                                        <p class="text-[9px] font-bold text-slate-500">{{ node_data.ip }}</p>
+                                        <p class="text-[9px] font-bold text-emerald-600">Latest: {{ latest.time }}</p>
                                     </div>
-                                    <div class="flex items-center gap-3">
-                                        <span class="bg-white border border-slate-200 text-slate-600 text-[10px] font-black px-2 py-0.5 rounded-md shadow-sm">{{ files|length }} Files</span>
-                                        <i class="fa-solid fa-chevron-down text-slate-400 text-xs"></i>
-                                    </div>
+                                    <span class="bg-white border border-slate-200 text-slate-600 text-[10px] font-black px-2 py-0.5 rounded-md shadow-sm">{{ node_data.files|length }} Files</span>
                                 </div>
-                                <div id="backup_{{nid}}" class="hidden border-t border-slate-200 bg-white p-4">
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                        {% for f in files %}
-                                        <div class="flex items-center justify-between bg-slate-50 border {% if loop.index == 1 %}border-emerald-200{% else %}border-slate-100{% endif %} p-2.5 rounded-lg">
-                                            <div class="truncate mr-2">
-                                                <p class="text-[11px] font-bold text-slate-700 truncate">{{ f.filename }}</p>
-                                                <p class="text-[8px] font-mono font-bold text-slate-400 mt-0.5">{{ f.time }} • {{ f.size }} {% if loop.index == 1 %}<span class="text-emerald-500 ml-1">Latest</span>{% endif %}</p>
-                                            </div>
-                                            <div class="flex gap-1 shrink-0">
-                                                <a href="/download_backup/{{ f.filename }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
-                                                <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
-                                            </div>
+                                <div id="backup_{{gid}}_{{nid}}" class="hidden border-t border-slate-200 bg-white p-4 space-y-2">
+                                    {% for f in node_data.files %}
+                                    <div class="flex items-center justify-between bg-slate-50 border border-slate-100 p-2.5 rounded-lg">
+                                        <div class="truncate mr-2">
+                                            <p class="text-[11px] font-bold text-slate-700 truncate">{{ f.filename }}</p>
+                                            <p class="text-[8px] font-mono font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
                                         </div>
-                                        {% endfor %}
+                                        <div class="flex gap-1 shrink-0">
+                                            <a href="/download_backup/{{ f.filename }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
+                                            <form action="/restore_node_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Restore this backup to {{ nid }}?');" class="m-0"><input type="hidden" name="node_id" value="{{ nid }}"><button type="submit" class="bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[9px]"></i></button></form>
+                                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
+                                        </div>
                                     </div>
+                                    {% endfor %}
                                 </div>
                             </div>
                             {% endfor %}
@@ -238,43 +265,24 @@
 
             {% if orphaned_backups %}
             <div>
-                <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 bg-slate-100 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-slate-200"><i class="fa-solid fa-ghost"></i> Unlinked Backups</h3>
+                <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 bg-slate-100 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-slate-200"><i class="fa-solid fa-ghost"></i> Orphan Node Backups</h3>
                 <div class="space-y-3">
                     {% for nid, files in orphaned_backups.items() %}
-                    {% set latest = files[0] %}
-                    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm opacity-80 hover:opacity-100 transition-opacity">
-                        <div class="px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
-                            <div class="flex items-center gap-4">
-                                <div class="w-10 h-10 bg-slate-100 text-slate-400 rounded-xl flex items-center justify-center shadow-inner"><i class="fa-solid fa-server"></i></div>
-                                <div>
-                                    <h4 class="text-sm font-black text-slate-600 uppercase line-through">{{ nid }}</h4>
-                                    <p class="text-[10px] font-bold text-slate-400 mt-0.5">Deleted Server</p>
+                    <div class="bg-white border border-slate-200 rounded-2xl p-4">
+                        <h4 class="text-sm font-black text-slate-600 uppercase mb-2">{{ nid }}</h4>
+                        <div class="space-y-2">
+                            {% for f in files %}
+                            <div class="flex items-center justify-between bg-slate-50 border border-slate-100 p-2.5 rounded-lg">
+                                <div class="truncate mr-2">
+                                    <p class="text-[11px] font-bold text-slate-700 truncate">{{ f.filename }}</p>
+                                    <p class="text-[8px] font-mono font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
+                                </div>
+                                <div class="flex gap-1 shrink-0">
+                                    <a href="/download_backup/{{ f.filename }}" class="bg-slate-100 text-slate-500 hover:bg-slate-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
+                                    <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
                                 </div>
                             </div>
-                            <div class="flex items-center gap-3">
-                                <span class="bg-slate-100 text-slate-500 text-[10px] font-black px-2.5 py-1 rounded-md">{{ files|length }} Files</span>
-                                <i class="fa-solid fa-chevron-down text-slate-400"></i>
-                            </div>
-                        </div>
-                        <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-slate-50/50 p-5">
-                            <div class="mb-4 flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                                <div><h5 class="text-xs font-black text-red-600">Purge Forever</h5><p class="text-[9px] text-slate-500 font-bold">Permanently delete all old data for {{ nid }}</p></div>
-                                <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ Delete forever?');" class="m-0"><button type="submit" class="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-black transition-colors border border-red-200 hover:border-red-500">Purge</button></form>
-                            </div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {% for f in files %}
-                                <div class="flex items-center justify-between bg-white border border-slate-200 p-3 rounded-xl shadow-sm">
-                                    <div class="truncate mr-3">
-                                        <p class="text-xs font-bold text-slate-500 truncate"><i class="fa-regular fa-file-code mr-1.5"></i>{{ f.filename }}</p>
-                                        <p class="text-[9px] font-mono font-bold text-slate-400 mt-1">{{ f.time }}</p>
-                                    </div>
-                                    <div class="flex gap-1.5 shrink-0">
-                                        <a href="/download_backup/{{ f.filename }}" class="bg-slate-100 text-slate-500 hover:bg-slate-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[10px]"></i></a>
-                                        <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[10px]"></i></button></form>
-                                    </div>
-                                </div>
-                                {% endfor %}
-                            </div>
+                            {% endfor %}
                         </div>
                     </div>
                     {% endfor %}
@@ -282,14 +290,13 @@
             </div>
             {% endif %}
 
-            {% if not custom_backups and not auto_backups and not orphaned_backups %}
+            {% if not full_backups and not custom_backups and not auto_backups and not orphaned_backups %}
             <div class="text-center py-16">
                 <div class="w-20 h-20 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 shadow-inner"><i class="fa-solid fa-box-open"></i></div>
                 <h3 class="text-lg font-black text-slate-800 mb-1">No Backups Yet</h3>
-                <p class="text-sm font-bold text-slate-500">Create a backup from any node's panel to see it here.</p>
+                <p class="text-sm font-bold text-slate-500">Create Full Backup or Node Backup to get started.</p>
             </div>
             {% endif %}
-            
         </div>
     </div>
 </div>
