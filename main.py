@@ -1,8 +1,8 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, re, subprocess, urllib.parse, base64, threading, time, requests
+import json, os, re, secrets, subprocess, urllib.parse, base64, threading, time, requests
 from datetime import datetime, timedelta
 
-from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
+from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, MASTER_API_KEY, load_config, save_config
 from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB
 from core_auto import load_auto_groups, save_auto_groups
 
@@ -22,8 +22,12 @@ from auth_service import (
     ensure_auth_config,
     verify_login_credentials,
     resolve_auth_telegram_target,
-    generate_otp_code,
     send_otp_to_telegram,
+    create_otp_challenge,
+    refresh_otp_challenge,
+    get_otp_challenge,
+    verify_otp_challenge,
+    clear_otp_challenge,
     check_rate_limit,
     register_rate_failure,
     register_rate_success,
@@ -41,7 +45,6 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=30)
 BACKUP_DIR = "/root/PanelMaster/backups"
 ACTIVITY_LOG_FILE = os.path.join(BACKUP_DIR, "dashboard_activity_log.json")
 ACTIVITY_LOG_LOCK = threading.Lock()
-MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 if not os.path.exists(BACKUP_DIR): 
     os.makedirs(BACKUP_DIR)
@@ -50,6 +53,120 @@ if not os.path.exists(BACKUP_DIR):
 app.register_blueprint(api_bp)
 
 start_background_monitor()
+
+
+def _get_expected_origin():
+    proto = str(request.headers.get("X-Forwarded-Proto", "")).strip().split(",")[0].strip()
+    if not proto:
+        proto = "https" if request.is_secure else "http"
+    host = str(request.host or "").strip()
+    return f"{proto}://{host}"
+
+
+def _same_origin_ok():
+    expected = _get_expected_origin()
+    origin = str(request.headers.get("Origin", "")).strip()
+    referer = str(request.headers.get("Referer", "")).strip()
+    if origin:
+        return origin.startswith(expected)
+    if referer:
+        return referer.startswith(expected)
+    return True
+
+
+def _get_or_create_csrf_token():
+    tok = str(session.get("_csrf_token", "")).strip()
+    if not tok:
+        tok = secrets.token_urlsafe(24)
+        session["_csrf_token"] = tok
+    return tok
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": _get_or_create_csrf_token()}
+
+
+@app.before_request
+def enforce_https_and_csrf():
+    force_https = str(os.environ.get("FORCE_HTTPS", "0")).strip() in ("1", "true", "True")
+    if force_https:
+        is_https = request.is_secure or str(request.headers.get("X-Forwarded-Proto", "")).startswith("https")
+        host_l = str(request.host or "").lower()
+        if not is_https and "localhost" not in host_l and "127.0.0.1" not in host_l:
+            return redirect(request.url.replace("http://", "https://", 1), code=301)
+
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    if request.path.startswith("/api/") or request.path.startswith("/conf/"):
+        return
+
+    if not _same_origin_ok():
+        return "Forbidden (origin check failed).", 403
+
+    csrf_expected = _get_or_create_csrf_token()
+    csrf_sent = (
+        str(request.form.get("_csrf_token", "")).strip()
+        or str(request.headers.get("X-CSRF-Token", "")).strip()
+    )
+    if not csrf_sent or csrf_sent != csrf_expected:
+        return "Forbidden (csrf check failed).", 403
+
+
+@app.after_request
+def apply_security_headers(response):
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+    if request.is_secure or str(request.headers.get("X-Forwarded-Proto", "")).startswith("https"):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    csrf_token = _get_or_create_csrf_token()
+    response.set_cookie(
+        "csrf_token",
+        csrf_token,
+        secure=app.config.get("SESSION_COOKIE_SECURE", False),
+        httponly=False,
+        samesite="Lax",
+        path="/"
+    )
+
+    ctype = str(response.headers.get("Content-Type", "")).lower()
+    if "text/html" in ctype:
+        body = response.get_data(as_text=True)
+        if body and "</body>" in body:
+            inject_js = """
+<script>
+(function(){
+  function getCookie(name){
+    var m=document.cookie.match(new RegExp('(?:^|; )'+name.replace(/[.$?*|{}()\\[\\]\\\\\\/\\+^]/g,'\\\\$&')+'=([^;]*)'));
+    return m?decodeURIComponent(m[1]):'';
+  }
+  function applyCsrf(){
+    var t=getCookie('csrf_token');
+    if(!t){return;}
+    var forms=document.querySelectorAll('form');
+    for(var i=0;i<forms.length;i++){
+      if(forms[i].querySelector('input[name="_csrf_token"]')){continue;}
+      var input=document.createElement('input');
+      input.type='hidden';
+      input.name='_csrf_token';
+      input.value=t;
+      forms[i].appendChild(input);
+    }
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded', applyCsrf);
+  }else{
+    applyCsrf();
+  }
+})();
+</script>
+"""
+            response.set_data(body.replace("</body>", inject_js + "\n</body>"))
+    return response
 
 @app.before_request
 def check_auth():
@@ -75,21 +192,32 @@ def login():
         allowed, wait_seconds = check_rate_limit(login_rate_key, max_attempts=6, window_seconds=600, block_seconds=300)
         if not allowed:
             error = f"Too many attempts. Try again in {wait_seconds}s."
+            log_activity("Auth Login Blocked", f"ip={login_ip} wait={wait_seconds}s", "warning")
             return render_template('login.html', error=error)
 
         username = str(request.form.get('username', '')).strip()
         password = str(request.form.get('password', '')).strip()
+        user_rate_key = f"auth-login-user:{username.lower() or 'unknown'}"
+        allowed_user, wait_user = check_rate_limit(user_rate_key, max_attempts=6, window_seconds=600, block_seconds=300)
+        if not allowed_user:
+            error = f"Too many attempts. Try again in {wait_user}s."
+            log_activity("Auth Login Blocked", f"user={username or '-'} wait={wait_user}s", "warning")
+            return render_template('login.html', error=error)
 
         if not verify_login_credentials(cfg, username, password):
             register_rate_failure(login_rate_key, max_attempts=6, window_seconds=600, block_seconds=300)
+            register_rate_failure(user_rate_key, max_attempts=6, window_seconds=600, block_seconds=300)
             error = "Invalid username or password."
+            log_activity("Auth Login Failed", f"user={username or '-'} ip={login_ip}", "warning")
             return render_template('login.html', error=error)
 
         register_rate_success(login_rate_key)
+        register_rate_success(user_rate_key)
         if not is_2fa_enabled:
             session.clear()
             session['logged_in'] = True
             session.permanent = True
+            log_activity("Auth Login Success", f"user={username or '-'} no_2fa=true", "success")
             return redirect(url_for('dashboard'))
 
         token, admin_id = resolve_auth_telegram_target(cfg)
@@ -98,19 +226,21 @@ def login():
             return render_template('login.html', error=error)
 
         ttl_seconds = int(cfg.get("auth_otp_ttl_seconds", 300) or 300)
-        code = generate_otp_code()
+        challenge_id, code, expires_ts = create_otp_challenge(username, ttl_seconds=ttl_seconds)
         ok, msg = send_otp_to_telegram(token, admin_id, code, ttl_seconds=ttl_seconds)
         if not ok:
             error = f"Failed to send OTP: {msg}"
+            clear_otp_challenge(challenge_id)
+            log_activity("Auth OTP Send Failed", msg[:150], "error")
             return render_template('login.html', error=error)
 
         session.clear()
         session['otp_pending'] = True
-        session['otp_code'] = code
+        session['otp_challenge_id'] = challenge_id
         session['otp_user'] = username
-        session['otp_expires_ts'] = int(time.time()) + max(60, ttl_seconds)
+        session['otp_expires_ts'] = int(expires_ts)
         session['otp_sent_ts'] = int(time.time())
-        session['otp_verified'] = False
+        log_activity("Auth OTP Sent", f"user={username or '-'} ttl={ttl_seconds}s", "info")
         return redirect(url_for('login_otp'))
     return render_template('login.html', error=error)
 
@@ -120,11 +250,22 @@ def login_otp():
     if not session.get('otp_pending'):
         return redirect(url_for('login'))
 
-    cfg = load_config()
+    _ = load_config()
     error = ""
     now_ts = int(time.time())
     expires_ts = int(session.get('otp_expires_ts', 0) or 0)
+    challenge_id = str(session.get('otp_challenge_id', '')).strip()
+    login_user = str(session.get('otp_user', '')).strip()
+    if not challenge_id:
+        session.clear()
+        return redirect(url_for('login'))
+    rec = get_otp_challenge(challenge_id)
+    if not rec:
+        session.clear()
+        return redirect(url_for('login'))
+    expires_ts = int(rec.get('expires_ts', expires_ts) or expires_ts)
     if expires_ts and now_ts > expires_ts:
+        clear_otp_challenge(challenge_id)
         session.clear()
         return redirect(url_for('login'))
 
@@ -135,23 +276,24 @@ def login_otp():
         allowed, wait_seconds = check_rate_limit(otp_rate_key, max_attempts=8, window_seconds=600, block_seconds=300)
         if not allowed:
             error = f"Too many OTP attempts. Try again in {wait_seconds}s."
+            log_activity("Auth OTP Blocked", f"user={login_user or '-'} ip={otp_ip} wait={wait_seconds}s", "warning")
             return render_template('login_otp.html', error=error, expires_ts=expires_ts)
 
         code_input = str(request.form.get('otp_code', '')).strip()
-        saved_code = str(session.get('otp_code', '')).strip()
-        if not saved_code or code_input != saved_code:
+        ok_verify, result = verify_otp_challenge(challenge_id, code_input)
+        if not ok_verify:
             register_rate_failure(otp_rate_key, max_attempts=8, window_seconds=600, block_seconds=300)
             error = "Invalid OTP code."
+            log_activity("Auth OTP Failed", f"user={login_user or '-'} ip={otp_ip}", "warning")
             return render_template('login_otp.html', error=error, expires_ts=expires_ts)
 
-        if int(time.time()) > int(session.get('otp_expires_ts', 0) or 0):
-            session.clear()
-            return redirect(url_for('login'))
-
         register_rate_success(otp_rate_key)
+        final_user = str((result or {}).get("username", login_user)).strip()
         session.clear()
         session['logged_in'] = True
+        session['auth_user'] = final_user
         session.permanent = True
+        log_activity("Auth Login Success", f"user={final_user or '-'} with_2fa=true", "success")
         return redirect(url_for('dashboard'))
 
     return render_template('login_otp.html', error=error, expires_ts=expires_ts)
@@ -166,13 +308,22 @@ def resend_login_otp():
     if not token or not admin_id:
         return redirect(url_for('login'))
 
+    challenge_id = str(session.get('otp_challenge_id', '')).strip()
+    if not challenge_id:
+        return redirect(url_for('login'))
+
     ttl_seconds = int(cfg.get("auth_otp_ttl_seconds", 300) or 300)
-    code = generate_otp_code()
+    code, expires_ts = refresh_otp_challenge(challenge_id, ttl_seconds=ttl_seconds)
+    if not code:
+        clear_otp_challenge(challenge_id)
+        session.clear()
+        return redirect(url_for('login'))
+
     ok, _ = send_otp_to_telegram(token, admin_id, code, ttl_seconds=ttl_seconds)
     if ok:
-        session['otp_code'] = code
-        session['otp_expires_ts'] = int(time.time()) + max(60, ttl_seconds)
+        session['otp_expires_ts'] = int(expires_ts)
         session['otp_sent_ts'] = int(time.time())
+        log_activity("Auth OTP Resent", f"user={session.get('otp_user', '-')}", "info")
     return redirect(url_for('login_otp'))
 
 @app.route('/logout')

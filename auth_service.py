@@ -1,4 +1,5 @@
 import random
+import secrets
 import threading
 import time
 import requests
@@ -7,6 +8,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 _RATE_LOCK = threading.Lock()
 _RATE_STORE = {}
+_OTP_LOCK = threading.Lock()
+_OTP_STORE = {}
 
 
 def ensure_auth_config(config, legacy_password=""):
@@ -92,6 +95,82 @@ def send_otp_to_telegram(bot_token, admin_id, code, ttl_seconds=300):
         return False, f"http {res.status_code}: {res.text[:180]}"
     except Exception as e:
         return False, str(e)
+
+
+def create_otp_challenge(username, ttl_seconds=300):
+    challenge_id = secrets.token_urlsafe(18)
+    now = int(time.time())
+    code = generate_otp_code()
+    ttl = max(60, int(ttl_seconds or 300))
+    with _OTP_LOCK:
+        _OTP_STORE[challenge_id] = {
+            "username": str(username or "").strip(),
+            "code": code,
+            "expires_ts": now + ttl,
+            "created_ts": now
+        }
+    return challenge_id, code, now + ttl
+
+
+def refresh_otp_challenge(challenge_id, ttl_seconds=300):
+    cid = str(challenge_id or "").strip()
+    if not cid:
+        return None, None
+    now = int(time.time())
+    ttl = max(60, int(ttl_seconds or 300))
+    code = generate_otp_code()
+    with _OTP_LOCK:
+        rec = _OTP_STORE.get(cid)
+        if not rec:
+            return None, None
+        rec["code"] = code
+        rec["expires_ts"] = now + ttl
+        rec["created_ts"] = now
+        _OTP_STORE[cid] = rec
+    return code, now + ttl
+
+
+def get_otp_challenge(challenge_id):
+    cid = str(challenge_id or "").strip()
+    if not cid:
+        return None
+    now = int(time.time())
+    with _OTP_LOCK:
+        rec = _OTP_STORE.get(cid)
+        if not rec:
+            return None
+        if int(rec.get("expires_ts", 0) or 0) < now:
+            _OTP_STORE.pop(cid, None)
+            return None
+        return dict(rec)
+
+
+def verify_otp_challenge(challenge_id, code_input):
+    cid = str(challenge_id or "").strip()
+    inp = str(code_input or "").strip()
+    if not cid or not inp:
+        return False, None
+    now = int(time.time())
+    with _OTP_LOCK:
+        rec = _OTP_STORE.get(cid)
+        if not rec:
+            return False, None
+        if int(rec.get("expires_ts", 0) or 0) < now:
+            _OTP_STORE.pop(cid, None)
+            return False, None
+        if str(rec.get("code", "")).strip() != inp:
+            return False, dict(rec)
+        username = str(rec.get("username", "")).strip()
+        _OTP_STORE.pop(cid, None)
+        return True, {"username": username}
+
+
+def clear_otp_challenge(challenge_id):
+    cid = str(challenge_id or "").strip()
+    if not cid:
+        return
+    with _OTP_LOCK:
+        _OTP_STORE.pop(cid, None)
 
 
 def check_rate_limit(key, max_attempts=5, window_seconds=600, block_seconds=300):

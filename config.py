@@ -1,10 +1,11 @@
 import os, json
 
-SECRET_KEY = "qito_super_secret_admin_key"
+SECRET_KEY = os.environ.get("PANEL_SECRET_KEY", "qito_super_secret_admin_key")
 USERS_DB = "/root/qito_master/users_db.json"
 NODES_LIST = "/root/qito_master/nodes_list.txt"
 CONFIG_FILE = "/root/qito_master/config.json"
-ADMIN_PASS = "admin123"
+ADMIN_PASS = os.environ.get("PANEL_ADMIN_LEGACY_PASS", "admin123")
+MASTER_API_KEY = os.environ.get("PANEL_MASTER_API_KEY", "My_Super_Secret_VPN_Key_2026")
 
 def load_config():
     config = {

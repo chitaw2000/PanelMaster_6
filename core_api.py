@@ -7,13 +7,13 @@ from core_auto import load_auto_groups
 from core_engine import get_safe_delete_cmd, get_safe_add_out_cmd
 
 try:
-    from config import USERS_DB, NODES_LIST
+    from config import USERS_DB, NODES_LIST, MASTER_API_KEY
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+    MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 api_bp = Blueprint('api_bp', __name__)
-MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 def get_target_ip(node_id):
     node_key = str(node_id or "").strip()

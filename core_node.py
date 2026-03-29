@@ -5,10 +5,11 @@ from core_auto import find_available_node, load_auto_groups, save_auto_groups
 from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cmd
 
 try:
-    from config import USERS_DB, NODES_LIST
+    from config import USERS_DB, NODES_LIST, MASTER_API_KEY
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+    MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 def get_robust_ip(node_id):
     node_key = str(node_id or "").strip()
@@ -90,7 +91,7 @@ def sync_new_user_to_subpanel(username, group_id, total_gb, expire_date, token, 
         requests.post(
             "http://167.172.91.222:4000/api/internal/sync-user-api",
             json=payload,
-            headers={"Content-Type": "application/json", "x-api-key": "My_Super_Secret_VPN_Key_2026"},
+            headers={"Content-Type": "application/json", "x-api-key": MASTER_API_KEY},
             timeout=10
         )
     except Exception as e:

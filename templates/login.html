@@ -16,6 +16,7 @@
         {% endif %}
 
         <form method="POST" class="space-y-4">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
             <input type="text" name="username" placeholder="Username" autocomplete="username" required class="w-full bg-black/30 border border-white/10 p-4 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400">
             <input type="password" name="password" placeholder="Password" autocomplete="current-password" required class="w-full bg-black/30 border border-white/10 p-4 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400">
             <button class="w-full bg-blue-500 hover:bg-blue-400 text-white p-4 rounded-xl font-bold transition-all transform hover:scale-[1.02] shadow-[0_0_15px_rgba(59,130,246,0.5)]">

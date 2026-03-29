@@ -6,10 +6,11 @@ from core_auto import load_auto_groups
 from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
-    from config import USERS_DB, NODES_LIST, load_config
+    from config import USERS_DB, NODES_LIST, MASTER_API_KEY, load_config
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+    MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 def get_target_ip(node_id):
     node_key = str(node_id or "").strip()
@@ -140,7 +141,7 @@ def sync_usage_to_subpanel(username, uinfo):
             "isBlocked": bool(uinfo.get('is_blocked', False))
         }
 
-        headers = {"Content-Type": "application/json", "x-api-key": "My_Super_Secret_VPN_Key_2026"}
+        headers = {"Content-Type": "application/json", "x-api-key": MASTER_API_KEY}
         urls = [
             "http://167.172.91.222:4000/api/internal/sync-user-usage",
             "http://167.172.91.222:4000/admin/api/internal/sync-user-usage"
