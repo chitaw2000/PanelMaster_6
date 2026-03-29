@@ -80,6 +80,11 @@
             <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="w-full sm:w-auto bg-white text-purple-600 hover:bg-purple-50 px-8 py-3 rounded-xl text-sm font-black transition justify-center flex items-center shadow-lg shadow-purple-900/20 hover:-translate-y-0.5">
                 <i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Generate Keys
             </button>
+            <form action="/delete_auto_group/{{ group_id }}" method="POST" onsubmit="return confirmDeleteGroupById('{{ group_id }}');" class="w-full sm:w-auto m-0">
+                <button type="submit" class="w-full bg-red-500/90 hover:bg-red-600 text-white px-5 py-3 rounded-xl text-sm font-black transition flex items-center justify-center border border-red-300/30">
+                    <i class="fa-solid fa-trash-can mr-2"></i> Delete Auto Group
+                </button>
+            </form>
         </div>
     </div>
 
@@ -621,6 +626,16 @@ function updateBulkUI() {
     } else {
         d.classList.add('hidden');
     }
+}
+
+function confirmDeleteGroupById(groupId) {
+    const typed = prompt(`Type Auto Group ID to delete:\n${groupId}`);
+    if (typed === null) return false;
+    if ((typed || '').trim().toLowerCase() !== String(groupId || '').trim().toLowerCase()) {
+        alert('Auto Group ID does not match. Delete cancelled.');
+        return false;
+    }
+    return confirm(`Final confirm: delete Auto Group [${groupId}]?`);
 }
 
 function switchGroupTab(tab) {
