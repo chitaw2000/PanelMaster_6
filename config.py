@@ -19,6 +19,7 @@ def load_config():
         "auth_telegram_bot_token": "",
         "auth_telegram_admin_id": "",
         "auth_otp_ttl_seconds": 300,
+        "api_key_clients": [],
         "disabled_nodes": [],
         "backup_bot_enabled": False,
         "backup_bot_token": "",

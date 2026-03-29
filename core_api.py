@@ -7,13 +7,22 @@ from core_auto import load_auto_groups
 from core_engine import get_safe_delete_cmd, get_safe_add_out_cmd
 
 try:
-    from config import USERS_DB, NODES_LIST, MASTER_API_KEY
+    from config import USERS_DB, NODES_LIST
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
-    MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
+
+from core_security_keys import validate_api_key_value
 
 api_bp = Blueprint('api_bp', __name__)
+
+
+def _require_api_key():
+    api_key = request.headers.get("x-api-key")
+    ok, _meta = validate_api_key_value(api_key)
+    if not ok:
+        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    return None
 
 def get_target_ip(node_id):
     node_key = str(node_id or "").strip()
@@ -193,8 +202,9 @@ def api_get_ssconf(token):
 @api_bp.route('/api/active-groups', methods=['GET', 'OPTIONS'])
 def api_get_active_groups():
     if request.method == 'OPTIONS': return jsonify({"success": True}), 200
-    if request.headers.get('x-api-key') != MASTER_API_KEY:
-        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    auth_err = _require_api_key()
+    if auth_err:
+        return auth_err
     
     try:
         groups = load_auto_groups()
@@ -206,8 +216,9 @@ def api_get_active_groups():
 @api_bp.route('/api/generate-keys', methods=['POST', 'OPTIONS'])
 def api_generate_keys():
     if request.method == 'OPTIONS': return jsonify({"success": True}), 200
-    if request.headers.get('x-api-key') != MASTER_API_KEY:
-        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    auth_err = _require_api_key()
+    if auth_err:
+        return auth_err
 
     req_data = request.get_json(force=True, silent=True)
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
@@ -296,8 +307,9 @@ def api_generate_keys():
 @api_bp.route('/api/webhook/switch', methods=['POST', 'OPTIONS'])
 def webhook_switch():
     if request.method == 'OPTIONS': return jsonify({"success": True}), 200
-    if request.headers.get('x-api-key') != MASTER_API_KEY:
-        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    auth_err = _require_api_key()
+    if auth_err:
+        return auth_err
 
     req_data = request.get_json(force=True, silent=True)
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
@@ -376,8 +388,9 @@ def webhook_switch():
 @api_bp.route('/api/user-action', methods=['POST', 'OPTIONS'])
 def api_user_action():
     if request.method == 'OPTIONS': return jsonify({"success": True}), 200
-    if request.headers.get('x-api-key') != MASTER_API_KEY:
-        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    auth_err = _require_api_key()
+    if auth_err:
+        return auth_err
 
     req_data = request.get_json(force=True, silent=True)
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
@@ -430,8 +443,9 @@ def api_user_action():
 def api_internal_edit_user():
     if request.method == 'OPTIONS':
         return jsonify({"success": True}), 200
-    if request.headers.get('x-api-key') != MASTER_API_KEY:
-        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    auth_err = _require_api_key()
+    if auth_err:
+        return auth_err
 
     req_data = request.get_json(force=True, silent=True) or {}
     username = str(req_data.get('username', '')).strip()
@@ -497,8 +511,9 @@ def api_internal_edit_user():
 def api_internal_block_user():
     if request.method == 'OPTIONS':
         return jsonify({"success": True}), 200
-    if request.headers.get('x-api-key') != MASTER_API_KEY:
-        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    auth_err = _require_api_key()
+    if auth_err:
+        return auth_err
 
     req_data = request.get_json(force=True, silent=True) or {}
     username = str(req_data.get('username', '')).strip()
@@ -527,8 +542,9 @@ def api_internal_block_user():
 def api_internal_delete_user():
     if request.method == 'OPTIONS':
         return jsonify({"success": True}), 200
-    if request.headers.get('x-api-key') != MASTER_API_KEY:
-        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    auth_err = _require_api_key()
+    if auth_err:
+        return auth_err
 
     req_data = request.get_json(force=True, silent=True) or {}
     username = str(req_data.get('username', '')).strip()

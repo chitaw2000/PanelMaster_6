@@ -32,6 +32,11 @@ from auth_service import (
     register_rate_failure,
     register_rate_success,
 )
+from core_security_keys import (
+    list_api_key_clients,
+    create_api_key_client,
+    revoke_api_key_client,
+)
 
 # 🚀 API Blueprint ကို လှမ်းခေါ်ခြင်း
 from core_api import api_bp
@@ -325,6 +330,30 @@ def resend_login_otp():
         session['otp_sent_ts'] = int(time.time())
         log_activity("Auth OTP Resent", f"user={session.get('otp_user', '-')}", "info")
     return redirect(url_for('login_otp'))
+
+
+@app.route('/security/api-keys', methods=['GET'])
+def security_list_api_keys():
+    items = list_api_key_clients()
+    return jsonify({"success": True, "items": items})
+
+
+@app.route('/security/api-keys/create', methods=['POST'])
+def security_create_api_key():
+    req_json = request.get_json(silent=True) or {}
+    name = str(req_json.get("name", "")).strip() or str(request.form.get("name", "")).strip() or "client"
+    created = create_api_key_client(name)
+    log_activity("API Key Created", f"id={created.get('id')} name={name}", "warning")
+    return jsonify({"success": True, "item": created})
+
+
+@app.route('/security/api-keys/revoke/<client_id>', methods=['POST'])
+def security_revoke_api_key(client_id):
+    ok = revoke_api_key_client(client_id)
+    if ok:
+        log_activity("API Key Revoked", f"id={client_id}", "warning")
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "Client key not found"}), 404
 
 @app.route('/logout')
 def logout(): 
