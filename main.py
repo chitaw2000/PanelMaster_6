@@ -18,12 +18,26 @@ from core_backup import (
     read_backup_json,
 )
 from core_backup_bot import send_backup_to_telegram, start_backup_scheduler
+from auth_service import (
+    ensure_auth_config,
+    verify_login_credentials,
+    resolve_auth_telegram_target,
+    generate_otp_code,
+    send_otp_to_telegram,
+    check_rate_limit,
+    register_rate_failure,
+    register_rate_success,
+)
 
 # 🚀 API Blueprint ကို လှမ်းခေါ်ခြင်း
 from core_api import api_bp
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = str(os.environ.get("SESSION_COOKIE_SECURE", "0")).strip() in ("1", "true", "True")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=30)
 BACKUP_DIR = "/root/PanelMaster/backups"
 ACTIVITY_LOG_FILE = os.path.join(BACKUP_DIR, "dashboard_activity_log.json")
 ACTIVITY_LOG_LOCK = threading.Lock()
@@ -41,17 +55,125 @@ start_background_monitor()
 def check_auth():
     if request.path.startswith('/api/') or request.path.startswith('/conf/'):
         return
-    allowed_ui_endpoints = ['login', 'static', 'api_stats', 'api_user_ip', 'api_check_ssh', 'api_check_xray']
+    allowed_ui_endpoints = ['login', 'login_otp', 'resend_login_otp', 'static', 'api_stats', 'api_user_ip', 'api_check_ssh', 'api_check_xray']
     if request.endpoint not in allowed_ui_endpoints and not session.get('logged_in'): 
         return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    cfg = load_config()
+    cfg, changed = ensure_auth_config(cfg, legacy_password=ADMIN_PASS)
+    if changed:
+        save_config(cfg)
+
+    error = ""
+    is_2fa_enabled = bool(cfg.get("auth_2fa_enabled", True))
+    login_ip = str(request.headers.get("X-Forwarded-For", request.remote_addr or "")).split(",")[0].strip() or "unknown"
+    login_rate_key = f"auth-login:{login_ip}"
+
     if request.method == 'POST':
-        if request.form.get('password') == ADMIN_PASS:
+        allowed, wait_seconds = check_rate_limit(login_rate_key, max_attempts=6, window_seconds=600, block_seconds=300)
+        if not allowed:
+            error = f"Too many attempts. Try again in {wait_seconds}s."
+            return render_template('login.html', error=error)
+
+        username = str(request.form.get('username', '')).strip()
+        password = str(request.form.get('password', '')).strip()
+
+        if not verify_login_credentials(cfg, username, password):
+            register_rate_failure(login_rate_key, max_attempts=6, window_seconds=600, block_seconds=300)
+            error = "Invalid username or password."
+            return render_template('login.html', error=error)
+
+        register_rate_success(login_rate_key)
+        if not is_2fa_enabled:
+            session.clear()
             session['logged_in'] = True
+            session.permanent = True
             return redirect(url_for('dashboard'))
-    return render_template('login.html')
+
+        token, admin_id = resolve_auth_telegram_target(cfg)
+        if not token or not admin_id:
+            error = "2FA is enabled but Telegram token/admin ID is not configured."
+            return render_template('login.html', error=error)
+
+        ttl_seconds = int(cfg.get("auth_otp_ttl_seconds", 300) or 300)
+        code = generate_otp_code()
+        ok, msg = send_otp_to_telegram(token, admin_id, code, ttl_seconds=ttl_seconds)
+        if not ok:
+            error = f"Failed to send OTP: {msg}"
+            return render_template('login.html', error=error)
+
+        session.clear()
+        session['otp_pending'] = True
+        session['otp_code'] = code
+        session['otp_user'] = username
+        session['otp_expires_ts'] = int(time.time()) + max(60, ttl_seconds)
+        session['otp_sent_ts'] = int(time.time())
+        session['otp_verified'] = False
+        return redirect(url_for('login_otp'))
+    return render_template('login.html', error=error)
+
+
+@app.route('/login/otp', methods=['GET', 'POST'])
+def login_otp():
+    if not session.get('otp_pending'):
+        return redirect(url_for('login'))
+
+    cfg = load_config()
+    error = ""
+    now_ts = int(time.time())
+    expires_ts = int(session.get('otp_expires_ts', 0) or 0)
+    if expires_ts and now_ts > expires_ts:
+        session.clear()
+        return redirect(url_for('login'))
+
+    otp_ip = str(request.headers.get("X-Forwarded-For", request.remote_addr or "")).split(",")[0].strip() or "unknown"
+    otp_rate_key = f"auth-otp:{otp_ip}"
+
+    if request.method == 'POST':
+        allowed, wait_seconds = check_rate_limit(otp_rate_key, max_attempts=8, window_seconds=600, block_seconds=300)
+        if not allowed:
+            error = f"Too many OTP attempts. Try again in {wait_seconds}s."
+            return render_template('login_otp.html', error=error, expires_ts=expires_ts)
+
+        code_input = str(request.form.get('otp_code', '')).strip()
+        saved_code = str(session.get('otp_code', '')).strip()
+        if not saved_code or code_input != saved_code:
+            register_rate_failure(otp_rate_key, max_attempts=8, window_seconds=600, block_seconds=300)
+            error = "Invalid OTP code."
+            return render_template('login_otp.html', error=error, expires_ts=expires_ts)
+
+        if int(time.time()) > int(session.get('otp_expires_ts', 0) or 0):
+            session.clear()
+            return redirect(url_for('login'))
+
+        register_rate_success(otp_rate_key)
+        session.clear()
+        session['logged_in'] = True
+        session.permanent = True
+        return redirect(url_for('dashboard'))
+
+    return render_template('login_otp.html', error=error, expires_ts=expires_ts)
+
+
+@app.route('/login/otp/resend', methods=['POST'])
+def resend_login_otp():
+    if not session.get('otp_pending'):
+        return redirect(url_for('login'))
+    cfg = load_config()
+    token, admin_id = resolve_auth_telegram_target(cfg)
+    if not token or not admin_id:
+        return redirect(url_for('login'))
+
+    ttl_seconds = int(cfg.get("auth_otp_ttl_seconds", 300) or 300)
+    code = generate_otp_code()
+    ok, _ = send_otp_to_telegram(token, admin_id, code, ttl_seconds=ttl_seconds)
+    if ok:
+        session['otp_code'] = code
+        session['otp_expires_ts'] = int(time.time()) + max(60, ttl_seconds)
+        session['otp_sent_ts'] = int(time.time())
+    return redirect(url_for('login_otp'))
 
 @app.route('/logout')
 def logout(): 
