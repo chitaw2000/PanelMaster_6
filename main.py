@@ -17,6 +17,7 @@ from core_backup import (
     create_full_backup_snapshot,
     read_backup_json,
 )
+from core_backup_bot import send_backup_to_telegram, start_backup_scheduler
 
 # 🚀 API Blueprint ကို လှမ်းခေါ်ခြင်း
 from core_api import api_bp
@@ -1651,8 +1652,7 @@ def download_backup_global():
         return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
     return "No DB found."
 
-@app.route('/create_full_backup', methods=['POST'])
-def create_full_backup():
+def build_full_backup_payload():
     with db_lock:
         users_db = {}
         nodes_db = {}
@@ -1691,9 +1691,58 @@ def create_full_backup():
             "nodes_list": nodes_list_raw,
         }
     }
-    filename = create_full_backup_snapshot(BACKUP_DIR, payload)
-    log_activity("Create Full Backup", f"file={filename} users={len(users_db)}", "info")
+    return payload, len(users_db)
+
+def create_full_backup_file(source="manual"):
+    payload, user_count = build_full_backup_payload()
+    backup_ref = create_full_backup_snapshot(BACKUP_DIR, payload)
+    backup_path = safe_backup_path(BACKUP_DIR, backup_ref)
+    log_activity("Create Full Backup", f"source={source} file={backup_ref} users={user_count}", "info")
+    return backup_ref, backup_path, user_count
+
+@app.route('/create_full_backup', methods=['POST'])
+def create_full_backup():
+    create_full_backup_file("manual_button")
     return redirect(request.referrer or url_for('dashboard'))
+
+@app.route('/save_backup_bot_settings', methods=['POST'])
+def save_backup_bot_settings():
+    cfg = load_config()
+    cfg['backup_bot_enabled'] = request.form.get('backup_bot_enabled') == 'on'
+    cfg['backup_bot_token'] = str(request.form.get('backup_bot_token', '')).strip()
+    cfg['backup_bot_admin_id'] = str(request.form.get('backup_bot_admin_id', '')).strip()
+    try:
+        h = float(request.form.get('backup_bot_interval_hours', 1) or 1)
+    except Exception:
+        h = 1.0
+    cfg['backup_bot_interval_hours'] = max(1.0, h)
+    save_config(cfg)
+    log_activity("Save Backup Bot Settings", f"enabled={cfg['backup_bot_enabled']} interval={cfg['backup_bot_interval_hours']}h", "info")
+    return redirect(url_for('dashboard'))
+
+@app.route('/send_backup_now', methods=['POST'])
+def send_backup_now():
+    cfg = load_config()
+    token = str(cfg.get('backup_bot_token', '')).strip()
+    admin_id = str(cfg.get('backup_bot_admin_id', '')).strip()
+    if not token or not admin_id:
+        log_activity("Backup Bot Manual Send Failed", "missing token/admin id", "error")
+        return redirect(url_for('dashboard'))
+
+    backup_ref, backup_path, user_count = create_full_backup_file("manual_telegram")
+    ok, msg = send_backup_to_telegram(
+        token,
+        admin_id,
+        backup_path,
+        caption=f"PanelMaster Manual Backup\nFile: {backup_ref}\nUsers: {user_count}"
+    )
+    if ok:
+        cfg['backup_bot_last_sent_ts'] = time.time()
+        save_config(cfg)
+        log_activity("Backup Bot Manual Send", f"sent file={backup_ref}", "success")
+    else:
+        log_activity("Backup Bot Manual Send Failed", msg[:180], "error")
+    return redirect(url_for('dashboard'))
 
 @app.route('/restore_full_backup/<path:backup_ref>', methods=['POST'])
 def restore_full_backup(backup_ref):
@@ -1864,6 +1913,15 @@ def clear_activity_logs():
     except Exception:
         pass
     return redirect(url_for('dashboard'))
+
+# Background scheduler for hourly Telegram backup delivery.
+start_backup_scheduler(
+    load_config,
+    save_config,
+    lambda source: create_full_backup_file(source)[:2],
+    log_fn=log_activity,
+    poll_seconds=60
+)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)

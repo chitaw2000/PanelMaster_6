@@ -7,7 +7,18 @@ CONFIG_FILE = "/root/qito_master/config.json"
 ADMIN_PASS = "admin123"
 
 def load_config():
-    config = {"interval": 12, "bot_token": "", "admin_ids": [], "mod_ids": [], "disabled_nodes": []}
+    config = {
+        "interval": 12,
+        "bot_token": "",
+        "admin_ids": [],
+        "mod_ids": [],
+        "disabled_nodes": [],
+        "backup_bot_enabled": False,
+        "backup_bot_token": "",
+        "backup_bot_admin_id": "",
+        "backup_bot_interval_hours": 1,
+        "backup_bot_last_sent_ts": 0
+    }
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:

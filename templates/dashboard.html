@@ -354,6 +354,38 @@
             </button>
         </div>
         <form action="/save_settings_basic" method="POST" class="bg-slate-50 p-6 rounded-2xl border border-slate-200 mb-6"><h3 class="text-sm font-black text-slate-700 uppercase tracking-widest mb-4">Core Config</h3><div class="space-y-4 mb-4"><div><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Bot Token</label><input type="text" name="bot_token" value="{{ config.bot_token }}" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"></div><div><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Sync Interval (Hours)</label><input type="number" name="interval" value="{{ config.interval }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"></div></div><button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md shadow-indigo-200 transition">Save Core Config</button></form>
+
+        <div class="bg-emerald-50 p-6 rounded-2xl border border-emerald-100 mb-6">
+            <h3 class="text-sm font-black text-emerald-700 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-paper-plane"></i> Telegram Backup Bot
+            </h3>
+            <form action="/save_backup_bot_settings" method="POST" class="space-y-4 mb-4">
+                <label class="flex items-center justify-between bg-white border border-emerald-100 rounded-xl px-3 py-2">
+                    <span class="text-xs font-black text-slate-600">Enable Auto Send</span>
+                    <input type="checkbox" name="backup_bot_enabled" {% if config.backup_bot_enabled %}checked{% endif %} class="w-4 h-4 accent-emerald-600">
+                </label>
+                <div>
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Backup Bot Token</label>
+                    <input type="text" name="backup_bot_token" value="{{ config.backup_bot_token or '' }}" placeholder="123456:ABC..." class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Admin Chat ID</label>
+                    <input type="text" name="backup_bot_admin_id" value="{{ config.backup_bot_admin_id or '' }}" placeholder="123456789" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Send Every (Hours)</label>
+                    <input type="number" step="1" min="1" name="backup_bot_interval_hours" value="{{ config.backup_bot_interval_hours or 1 }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300">
+                </div>
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md shadow-emerald-200 transition">
+                    Save Backup Bot Settings
+                </button>
+            </form>
+            <form action="/send_backup_now" method="POST" class="m-0">
+                <button type="submit" class="w-full bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-4 py-3 rounded-xl text-sm font-black transition">
+                    <i class="fa-solid fa-floppy-disk mr-1.5"></i> Manual Backup & Send To Telegram
+                </button>
+            </form>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm"><h3 class="text-sm font-black text-slate-700 uppercase tracking-widest mb-3">Admins</h3><div class="space-y-2 mb-4 max-h-32 overflow-y-auto pr-1">{% for aid in config.admin_ids %}<div class="flex justify-between items-center bg-slate-50 p-2 rounded-lg border border-slate-100"><span class="text-xs font-mono font-bold text-slate-600">{{ aid }}</span><form action="/config_action" method="POST" class="m-0"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ aid }}"><button class="text-red-400 hover:text-red-600 px-2"><i class="fa-solid fa-xmark"></i></button></form></div>{% else %}<p class="text-xs text-slate-400 italic">No admins added.</p>{% endfor %}</div><form action="/config_action" method="POST" class="flex gap-2"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="Telegram ID" class="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs font-mono" required><button class="bg-slate-800 text-white px-3 rounded-lg text-xs font-bold hover:bg-black transition"><i class="fa-solid fa-plus"></i></button></form></div><div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm"><h3 class="text-sm font-black text-slate-700 uppercase tracking-widest mb-3">Moderators</h3><div class="space-y-2 mb-4 max-h-32 overflow-y-auto pr-1">{% for mid in config.mod_ids %}<div class="flex justify-between items-center bg-slate-50 p-2 rounded-lg border border-slate-100"><span class="text-xs font-mono font-bold text-slate-600">{{ mid }}</span><form action="/config_action" method="POST" class="m-0"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ mid }}"><button class="text-red-400 hover:text-red-600 px-2"><i class="fa-solid fa-xmark"></i></button></form></div>{% else %}<p class="text-xs text-slate-400 italic">No mods added.</p>{% endfor %}</div><form action="/config_action" method="POST" class="flex gap-2"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="Telegram ID" class="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs font-mono" required><button class="bg-slate-800 text-white px-3 rounded-lg text-xs font-bold hover:bg-black transition"><i class="fa-solid fa-plus"></i></button></form></div></div>
     </div>
 </div>
