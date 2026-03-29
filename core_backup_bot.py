@@ -50,18 +50,26 @@ def start_backup_scheduler(load_config_fn, save_config_fn, create_backup_file_fn
                 enabled = bool(cfg.get("backup_bot_enabled", False))
                 token = str(cfg.get("backup_bot_token", "")).strip()
                 admin_id = str(cfg.get("backup_bot_admin_id", "")).strip()
+
                 try:
-                    hours = float(cfg.get("backup_bot_interval_hours", 1) or 1)
+                    interval_minutes = float(cfg.get("backup_bot_interval_minutes", 0) or 0)
                 except Exception:
-                    hours = 1.0
-                hours = max(1.0, hours)
+                    interval_minutes = 0.0
+                if interval_minutes <= 0:
+                    # Backward-compatible fallback for old configs.
+                    try:
+                        hours = float(cfg.get("backup_bot_interval_hours", 1) or 1)
+                    except Exception:
+                        hours = 1.0
+                    interval_minutes = max(1.0, hours * 60.0)
+                interval_minutes = max(1.0, interval_minutes)
                 try:
                     last_sent = float(cfg.get("backup_bot_last_sent_ts", 0) or 0)
                 except Exception:
                     last_sent = 0.0
 
                 now = time.time()
-                due = enabled and token and admin_id and (now - last_sent >= hours * 3600)
+                due = enabled and token and admin_id and (now - last_sent >= interval_minutes * 60.0)
                 if due:
                     backup_ref, backup_path = create_backup_file_fn("auto_telegram")
                     ok, msg = send_backup_to_telegram(

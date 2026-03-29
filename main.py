@@ -1712,12 +1712,14 @@ def save_backup_bot_settings():
     cfg['backup_bot_token'] = str(request.form.get('backup_bot_token', '')).strip()
     cfg['backup_bot_admin_id'] = str(request.form.get('backup_bot_admin_id', '')).strip()
     try:
-        h = float(request.form.get('backup_bot_interval_hours', 1) or 1)
+        m = float(request.form.get('backup_bot_interval_minutes', 60) or 60)
     except Exception:
-        h = 1.0
-    cfg['backup_bot_interval_hours'] = max(1.0, h)
+        m = 60.0
+    cfg['backup_bot_interval_minutes'] = max(1.0, m)
+    # Keep old config key updated for backward compatibility.
+    cfg['backup_bot_interval_hours'] = cfg['backup_bot_interval_minutes'] / 60.0
     save_config(cfg)
-    log_activity("Save Backup Bot Settings", f"enabled={cfg['backup_bot_enabled']} interval={cfg['backup_bot_interval_hours']}h", "info")
+    log_activity("Save Backup Bot Settings", f"enabled={cfg['backup_bot_enabled']} interval={cfg['backup_bot_interval_minutes']}m", "info")
     return redirect(url_for('dashboard'))
 
 @app.route('/send_backup_now', methods=['POST'])

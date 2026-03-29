@@ -17,6 +17,7 @@ def load_config():
         "backup_bot_token": "",
         "backup_bot_admin_id": "",
         "backup_bot_interval_hours": 1,
+        "backup_bot_interval_minutes": 60,
         "backup_bot_last_sent_ts": 0
     }
     if os.path.exists(CONFIG_FILE):

@@ -373,8 +373,8 @@
                     <input type="text" name="backup_bot_admin_id" value="{{ config.backup_bot_admin_id or '' }}" placeholder="123456789" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300">
                 </div>
                 <div>
-                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Send Every (Hours)</label>
-                    <input type="number" step="1" min="1" name="backup_bot_interval_hours" value="{{ config.backup_bot_interval_hours or 1 }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300">
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Send Every (Minutes)</label>
+                    <input type="number" step="1" min="1" name="backup_bot_interval_minutes" value="{{ config.backup_bot_interval_minutes or ((config.backup_bot_interval_hours or 1) * 60) }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300">
                 </div>
                 <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md shadow-emerald-200 transition">
                     Save Backup Bot Settings
@@ -382,7 +382,7 @@
             </form>
             <form action="/send_backup_now" method="POST" class="m-0">
                 <button type="submit" class="w-full bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-4 py-3 rounded-xl text-sm font-black transition">
-                    <i class="fa-solid fa-floppy-disk mr-1.5"></i> Manual Backup & Send To Telegram
+                    <i class="fa-solid fa-floppy-disk mr-1.5"></i> Backup Now
                 </button>
             </form>
         </div>
