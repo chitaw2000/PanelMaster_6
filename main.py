@@ -1711,10 +1711,18 @@ def save_backup_bot_settings():
     cfg['backup_bot_enabled'] = request.form.get('backup_bot_enabled') == 'on'
     cfg['backup_bot_token'] = str(request.form.get('backup_bot_token', '')).strip()
     cfg['backup_bot_admin_id'] = str(request.form.get('backup_bot_admin_id', '')).strip()
+    raw_minutes = request.form.get('backup_bot_interval_minutes', None)
+    raw_hours = request.form.get('backup_bot_interval_hours', None)
     try:
-        m = float(request.form.get('backup_bot_interval_minutes', 60) or 60)
+        if raw_minutes not in (None, ""):
+            m = float(raw_minutes)
+        elif raw_hours not in (None, ""):
+            # Backward-compatible fallback for older dashboard forms.
+            m = float(raw_hours) * 60.0
+        else:
+            m = float(cfg.get('backup_bot_interval_minutes', 60) or 60)
     except Exception:
-        m = 60.0
+        m = float(cfg.get('backup_bot_interval_minutes', 60) or 60)
     cfg['backup_bot_interval_minutes'] = max(1.0, m)
     # Keep old config key updated for backward compatibility.
     cfg['backup_bot_interval_hours'] = cfg['backup_bot_interval_minutes'] / 60.0
