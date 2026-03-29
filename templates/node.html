@@ -68,7 +68,7 @@
                 <i class="fa-solid fa-skull-crossbones mr-1.5"></i> Hard Reset Keys
             </button>
             <button onclick="document.getElementById('replaceIdModal').classList.remove('hidden')" class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-md transition"><i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i> Restore</button>
-            <form action="/delete_node/{{ node_id }}" method="POST" onsubmit="return confirm('Disconnect this server?');" class="m-0"><button class="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold border border-red-100 hover:border-red-500 transition shadow-sm"><i class="fa-solid fa-link-slash mr-1.5"></i> Disconnect</button></form>
+            <form action="/delete_node/{{ node_id }}" method="POST" onsubmit="return confirmNodeDelete('{{ node_id }}');" class="m-0"><button class="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold border border-red-100 hover:border-red-500 transition shadow-sm"><i class="fa-solid fa-link-slash mr-1.5"></i> Disconnect</button></form>
             <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-200 transition"><i class="fa-solid fa-plus mr-2"></i> Add Key</button>
         </div>
     </div>
@@ -135,14 +135,15 @@
                 <div class="truncate mr-3">
                     <p class="text-xs font-black text-slate-700 truncate">{{ f.filename }}</p>
                     <p class="text-[10px] font-mono font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
+                    <p class="text-[9px] font-mono font-bold text-slate-400">Folder: {{ f.folder }}</p>
                 </div>
                 <div class="flex gap-1.5 shrink-0">
-                    <a href="/download_backup/{{ f.filename }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Download backup"><i class="fa-solid fa-download text-[10px]"></i></a>
-                    <form action="/restore_node_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Restore this backup to {{ node_id }}?');" class="m-0">
+                    <a href="/download_backup/{{ f.ref }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Download backup"><i class="fa-solid fa-download text-[10px]"></i></a>
+                    <form action="/restore_node_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Restore this backup to {{ node_id }}?');" class="m-0">
                         <input type="hidden" name="node_id" value="{{ node_id }}">
                         <button type="submit" class="bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Restore backup"><i class="fa-solid fa-rotate-left text-[10px]"></i></button>
                     </form>
-                    <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete this backup file?');" class="m-0">
+                    <form action="/delete_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Delete this backup file?');" class="m-0">
                         <button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Delete backup"><i class="fa-solid fa-trash-can text-[10px]"></i></button>
                     </form>
                 </div>
@@ -259,6 +260,7 @@
 function toggleDropdown(){document.getElementById('topMenu').classList.toggle('hidden');}
 window.onclick=function(e){if(!e.target.closest('.dropdown-container')){let d=document.getElementById("topMenu");if(d&&!d.classList.contains('hidden'))d.classList.add('hidden');}}
 function updateBulkUI(){const c=document.querySelectorAll('input[name="usernames"]:checked').length;const d=document.getElementById('bulkActions');if(c>0){d.classList.remove('hidden');document.getElementById('selCount').innerText=c;}else{d.classList.add('hidden');}}
+function confirmNodeDelete(nodeId){const typed=prompt(`Type Node ID to disconnect:\n${nodeId}`);if(typed===null)return false;if((typed||'').trim().toLowerCase()!==String(nodeId||'').trim().toLowerCase()){alert('Node ID does not match.');return false;}return confirm(`Final confirm: disconnect node [${nodeId}]?`);}
 
 const CURRENT_NODE_ID = "{{ node_id }}"; let speedInterval=null; let lastStats={}; let lastTime=0; let checkNodeId = '';
 

@@ -68,14 +68,19 @@
         </div>
     </div>
 
-    <div class="mb-12">
+    <div class="mb-6 bg-white/90 rounded-2xl border border-slate-100 p-2 inline-flex gap-2 shadow-sm">
+        <button id="sectionTabAuto" onclick="switchDashboardSection('auto')" class="px-4 py-2 rounded-xl text-xs font-black bg-purple-600 text-white"><i class="fa-solid fa-network-wired mr-1"></i> Auto Node Groups</button>
+        <button id="sectionTabCustom" onclick="switchDashboardSection('custom')" class="px-4 py-2 rounded-xl text-xs font-black text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-server mr-1"></i> Custom Nodes</button>
+    </div>
+
+    <div id="sectionAuto" class="mb-12">
         <h2 class="text-lg font-black text-slate-800 mb-6 flex items-center gap-2"><i class="fa-solid fa-network-wired text-purple-500"></i> Auto Nodes (Groups)</h2>
         {% if groups %}
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {% for g in groups %}
             <div class="relative bg-gradient-to-br from-indigo-600 via-purple-600 to-fuchsia-600 rounded-3xl shadow-lg shadow-purple-200/50 hover:shadow-xl hover:shadow-purple-300/50 transition-all duration-300 group overflow-hidden flex flex-col text-white border border-white/10 hover:-translate-y-1 card-fx reveal-up">
                 <div class="absolute top-0 right-0 -mr-8 -mt-8 w-40 h-40 bg-white/10 rounded-full blur-2xl pointer-events-none"></div>
-                <form action="/delete_auto_group/{{ g.id }}" method="POST" onsubmit="return confirm('⚠️ WARNING: Delete this entire Auto Node?');" class="absolute top-5 right-5 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"><button type="submit" class="bg-black/20 hover:bg-red-500/80 backdrop-blur-md p-2.5 rounded-xl transition-colors" title="Delete Group"><i class="fa-solid fa-trash-can text-sm"></i></button></form>
+                <form action="/delete_auto_group/{{ g.id }}" method="POST" onsubmit="return confirmDeleteByTyping('Auto Group', '{{ g.id }}');" class="absolute top-5 right-5 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"><button type="submit" class="bg-black/20 hover:bg-red-500/80 backdrop-blur-md p-2.5 rounded-xl transition-colors" title="Delete Group"><i class="fa-solid fa-trash-can text-sm"></i></button></form>
                 <a href="/group/{{ g.id }}" class="block p-7 flex-1 flex flex-col relative z-10">
                     <div class="flex justify-between items-start mb-5"><div class="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-2xl border border-white/20 shadow-inner"><i class="fa-solid fa-network-wired"></i></div><div class="text-right mr-10 md:group-hover:hidden transition-opacity"><span class="bg-black/20 backdrop-blur-md border border-white/10 px-3 py-1 rounded-lg text-[10px] font-black uppercase font-mono shadow-sm">{{ g.id }}</span></div></div>
                     <h2 class="text-2xl font-black mb-2 truncate pr-8">{{ g.name }}</h2>
@@ -90,7 +95,7 @@
         {% endif %}
     </div>
 
-    <div>
+    <div id="sectionCustom">
         <h2 class="text-lg font-black text-slate-800 mb-6 flex items-center gap-2"><i class="fa-solid fa-server text-blue-500"></i> Custom Nodes</h2>
         {% if nodes %}
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -170,11 +175,12 @@
                         <div class="truncate mr-2">
                             <p class="text-xs font-black text-slate-700 truncate">{{ f.filename }}</p>
                             <p class="text-[10px] font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
+                            <p class="text-[9px] font-mono font-bold text-slate-400">Folder: {{ f.folder }}</p>
                         </div>
                         <div class="flex gap-1.5 shrink-0">
-                            <a href="/download_backup/{{ f.filename }}" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[10px]"></i></a>
-                            <form action="/restore_full_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Restore FULL backup now?');" class="m-0"><button type="submit" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[10px]"></i></button></form>
-                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[10px]"></i></button></form>
+                            <a href="/download_backup/{{ f.ref }}" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[10px]"></i></a>
+                            <form action="/restore_full_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Restore FULL backup now?');" class="m-0"><button type="submit" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[10px]"></i></button></form>
+                            <form action="/delete_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[10px]"></i></button></form>
                         </div>
                     </div>
                     {% endfor %}
@@ -205,11 +211,12 @@
                                 <div class="truncate mr-2">
                                     <p class="text-[11px] font-bold text-slate-700 truncate">{{ f.filename }}</p>
                                     <p class="text-[9px] font-mono font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
+                                    <p class="text-[8px] font-mono font-bold text-slate-400">Folder: {{ f.folder }}</p>
                                 </div>
                                 <div class="flex gap-1 shrink-0">
-                                    <a href="/download_backup/{{ f.filename }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
-                                    <form action="/restore_node_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Restore this node backup to {{ nid }}?');" class="m-0"><input type="hidden" name="node_id" value="{{ nid }}"><button type="submit" class="bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[9px]"></i></button></form>
-                                    <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
+                                    <a href="/download_backup/{{ f.ref }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
+                                    <form action="/restore_node_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Restore this node backup to {{ nid }}?');" class="m-0"><input type="hidden" name="node_id" value="{{ nid }}"><button type="submit" class="bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[9px]"></i></button></form>
+                                    <form action="/delete_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
                                 </div>
                             </div>
                             {% endfor %}
@@ -245,11 +252,12 @@
                                         <div class="truncate mr-2">
                                             <p class="text-[11px] font-bold text-slate-700 truncate">{{ f.filename }}</p>
                                             <p class="text-[8px] font-mono font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
+                                            <p class="text-[8px] font-mono font-bold text-slate-400">Folder: {{ f.folder }}</p>
                                         </div>
                                         <div class="flex gap-1 shrink-0">
-                                            <a href="/download_backup/{{ f.filename }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
-                                            <form action="/restore_node_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Restore this backup to {{ nid }}?');" class="m-0"><input type="hidden" name="node_id" value="{{ nid }}"><button type="submit" class="bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[9px]"></i></button></form>
-                                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
+                                            <a href="/download_backup/{{ f.ref }}" class="bg-indigo-100 text-indigo-600 hover:bg-indigo-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
+                                            <form action="/restore_node_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Restore this backup to {{ nid }}?');" class="m-0"><input type="hidden" name="node_id" value="{{ nid }}"><button type="submit" class="bg-emerald-100 text-emerald-600 hover:bg-emerald-600 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-rotate-left text-[9px]"></i></button></form>
+                                            <form action="/delete_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
                                         </div>
                                     </div>
                                     {% endfor %}
@@ -276,10 +284,11 @@
                                 <div class="truncate mr-2">
                                     <p class="text-[11px] font-bold text-slate-700 truncate">{{ f.filename }}</p>
                                     <p class="text-[8px] font-mono font-bold text-slate-400">{{ f.time }} • {{ f.size }}</p>
+                                    <p class="text-[8px] font-mono font-bold text-slate-400">Folder: {{ f.folder }}</p>
                                 </div>
                                 <div class="flex gap-1 shrink-0">
-                                    <a href="/download_backup/{{ f.filename }}" class="bg-slate-100 text-slate-500 hover:bg-slate-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
-                                    <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
+                                    <a href="/download_backup/{{ f.ref }}" class="bg-slate-100 text-slate-500 hover:bg-slate-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-[9px]"></i></a>
+                                    <form action="/delete_backup/{{ f.ref }}" method="POST" onsubmit="return confirm('Delete backup?');" class="m-0"><button type="submit" class="bg-red-100 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[9px]"></i></button></form>
                                 </div>
                             </div>
                             {% endfor %}
@@ -485,6 +494,27 @@ function closeHistoryModal() {
     const modal = document.getElementById('historyModal');
     if (modal) modal.classList.add('hidden');
 }
+function confirmDeleteByTyping(label, expectedId) {
+    const typed = prompt(`Type ${label} ID to delete:\n${expectedId}`);
+    if (typed === null) return false;
+    if ((typed || '').trim().toLowerCase() !== String(expectedId || '').trim().toLowerCase()) {
+        alert('ID does not match. Delete cancelled.');
+        return false;
+    }
+    return confirm(`Final confirm: delete ${label} [${expectedId}]?`);
+}
+function switchDashboardSection(section) {
+    const autoEl = document.getElementById('sectionAuto');
+    const customEl = document.getElementById('sectionCustom');
+    const autoBtn = document.getElementById('sectionTabAuto');
+    const customBtn = document.getElementById('sectionTabCustom');
+    const isAuto = section === 'auto';
+    if (autoEl) autoEl.classList.toggle('hidden', !isAuto);
+    if (customEl) customEl.classList.toggle('hidden', isAuto);
+    if (autoBtn) autoBtn.className = isAuto ? 'px-4 py-2 rounded-xl text-xs font-black bg-purple-600 text-white' : 'px-4 py-2 rounded-xl text-xs font-black text-slate-600 hover:bg-slate-100';
+    if (customBtn) customBtn.className = !isAuto ? 'px-4 py-2 rounded-xl text-xs font-black bg-indigo-600 text-white' : 'px-4 py-2 rounded-xl text-xs font-black text-slate-600 hover:bg-slate-100';
+    localStorage.setItem('dashboardSectionTab', isAuto ? 'auto' : 'custom');
+}
 function filterHistoryLogs() {
     const search = (document.getElementById('historySearchInput')?.value || '').trim().toLowerCase();
     const level = (document.getElementById('historyLevelFilter')?.value || '').trim().toLowerCase();
@@ -629,6 +659,8 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshAllNodePings();
     setInterval(refreshAllNodePings, 20000);
     filterHistoryLogs();
+    const savedTab = localStorage.getItem('dashboardSectionTab') || 'auto';
+    switchDashboardSection(savedTab === 'custom' ? 'custom' : 'auto');
 });
 
 document.addEventListener('keydown', (e) => {

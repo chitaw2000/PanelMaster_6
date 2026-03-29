@@ -43,21 +43,39 @@ def _node_id_from_name(filename):
     return None
 
 
-def safe_backup_path(backup_dir, filename):
-    base = os.path.basename(str(filename or ""))
-    if not base or base in {".", ".."}:
+def _rel(path, root):
+    try:
+        return os.path.relpath(path, root).replace("\\", "/")
+    except Exception:
+        return os.path.basename(path)
+
+
+def safe_backup_path(backup_dir, backup_ref):
+    ref = str(backup_ref or "").strip().replace("\\", "/").lstrip("/")
+    if not ref or ref in {".", ".."}:
         return None
-    path = os.path.join(backup_dir, base)
-    if os.path.abspath(os.path.dirname(path)) != os.path.abspath(backup_dir):
+    path = os.path.abspath(os.path.join(backup_dir, ref))
+    root = os.path.abspath(backup_dir)
+    if not (path == root or path.startswith(root + os.sep)):
         return None
     return path
 
 
-def create_node_backup_snapshot(backup_dir, node_id, db):
+def _node_backup_subdir(backup_dir, node_id, auto_groups):
+    nid = _safe_file_name(node_id)
+    for gid, gdata in (auto_groups or {}).items():
+        if nid in (gdata.get("nodes", {}) or {}):
+            return os.path.join(backup_dir, "group_nodes", _safe_file_name(gid), nid), f"group/{gid}/{nid}"
+    return os.path.join(backup_dir, "custom_nodes", nid), f"custom/{nid}"
+
+
+def create_node_backup_snapshot(backup_dir, node_id, db, auto_groups=None):
     safe_node = _safe_file_name(node_id)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"node_backup__{safe_node}__{timestamp}.json"
-    path = os.path.join(backup_dir, filename)
+    subdir, folder_label = _node_backup_subdir(backup_dir, safe_node, auto_groups or {})
+    os.makedirs(subdir, exist_ok=True)
+    path = os.path.join(subdir, filename)
 
     users = {}
     for uname, info in (db or {}).items():
@@ -73,16 +91,18 @@ def create_node_backup_snapshot(backup_dir, node_id, db):
     }
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
-    return filename, len(users)
+    return _rel(path, backup_dir), len(users), folder_label
 
 
 def create_full_backup_snapshot(backup_dir, payload):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"full_backup__{timestamp}.json"
-    path = os.path.join(backup_dir, filename)
+    full_dir = os.path.join(backup_dir, "full_backups")
+    os.makedirs(full_dir, exist_ok=True)
+    path = os.path.join(full_dir, filename)
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
-    return filename
+    return _rel(path, backup_dir)
 
 
 def read_backup_json(path):
@@ -97,17 +117,25 @@ def list_backups(backup_dir):
     if not os.path.exists(backup_dir):
         return {"node_backups": node_backups, "full_backups": full_backups}
 
-    for filename in sorted(os.listdir(backup_dir), reverse=True):
-        if not filename.endswith(".json"):
-            continue
-        path = os.path.join(backup_dir, filename)
-        if not os.path.isfile(path):
-            continue
+    all_files = []
+    for root, _, files in os.walk(backup_dir):
+        for filename in files:
+            if filename.endswith(".json"):
+                path = os.path.join(root, filename)
+                if os.path.isfile(path):
+                    all_files.append(path)
 
+    all_files.sort(key=lambda p: os.path.getctime(p), reverse=True)
+
+    for path in all_files:
+        filename = os.path.basename(path)
+        rel_ref = _rel(path, backup_dir)
         meta = {
+            "ref": rel_ref,
             "filename": filename,
             "size": _fmt_size(path),
-            "time": _fmt_time(path)
+            "time": _fmt_time(path),
+            "folder": os.path.dirname(rel_ref) or "."
         }
 
         if filename.startswith("full_backup__"):

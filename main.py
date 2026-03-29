@@ -347,9 +347,8 @@ def dashboard():
             }
             
     for nid, files in raw_backups.items():
-        if nid in nodes:
-            custom_backups[nid] = {"name": nodes[nid].get('name', nid), "ip": nodes[nid].get('ip', ''), "files": files}
-        elif nid in auto_nids_map:
+        # Prefer showing nodes under their group section when available.
+        if nid in auto_nids_map:
             nmeta = auto_nids_map[nid]
             gid = nmeta["gid"]
             auto_backups[gid]["nodes"][nid] = {
@@ -357,6 +356,8 @@ def dashboard():
                 "ip": nmeta["ip"],
                 "files": files
             }
+        elif nid in nodes:
+            custom_backups[nid] = {"name": nodes[nid].get('name', nid), "ip": nodes[nid].get('ip', ''), "files": files}
         else:
             orphaned_backups[nid] = files
             
@@ -1449,32 +1450,33 @@ def create_node_backup(node_id):
         with db_lock:
             with open(USERS_DB, 'r') as f:
                 db = json.load(f)
-        filename, user_count = create_node_backup_snapshot(BACKUP_DIR, node_id, db)
-        log_activity("Create Node Backup", f"node={node_id} users={user_count} file={filename}", "info")
+        groups = load_auto_groups()
+        backup_ref, user_count, folder_label = create_node_backup_snapshot(BACKUP_DIR, node_id, db, groups)
+        log_activity("Create Node Backup", f"node={node_id} users={user_count} file={backup_ref} folder={folder_label}", "info")
     return redirect(request.referrer)
 
-@app.route('/download_backup/<filename>')
-def download_backup(filename):
-    path = safe_backup_path(BACKUP_DIR, filename)
+@app.route('/download_backup/<path:backup_ref>')
+def download_backup(backup_ref):
+    path = safe_backup_path(BACKUP_DIR, backup_ref)
     if not path:
         return redirect(request.referrer or url_for('dashboard'))
     if os.path.exists(path): 
         return send_file(path, as_attachment=True)
     return redirect(request.referrer)
 
-@app.route('/delete_backup/<filename>', methods=['POST'])
-def delete_backup(filename):
-    path = safe_backup_path(BACKUP_DIR, filename)
+@app.route('/delete_backup/<path:backup_ref>', methods=['POST'])
+def delete_backup(backup_ref):
+    path = safe_backup_path(BACKUP_DIR, backup_ref)
     if not path:
         return redirect(request.referrer or url_for('dashboard'))
     if os.path.exists(path): 
         os.remove(path)
-        log_activity("Delete Backup", f"file={filename}", "warning")
+        log_activity("Delete Backup", f"file={backup_ref}", "warning")
     return redirect(request.referrer)
 
-@app.route('/restore_node_backup/<filename>', methods=['POST'])
-def restore_node_backup(filename):
-    path = safe_backup_path(BACKUP_DIR, filename)
+@app.route('/restore_node_backup/<path:backup_ref>', methods=['POST'])
+def restore_node_backup(backup_ref):
+    path = safe_backup_path(BACKUP_DIR, backup_ref)
     if not path or not os.path.exists(path):
         return redirect(request.referrer or url_for('dashboard'))
 
@@ -1533,7 +1535,7 @@ def restore_node_backup(filename):
         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
         execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
 
-    log_activity("Restore Node Backup", f"node={target_node} users={restored_count} file={filename}", "success")
+    log_activity("Restore Node Backup", f"node={target_node} users={restored_count} file={backup_ref}", "success")
     return redirect(request.referrer or f"/node/{target_node}")
 
 @app.route('/purge_node/<node_id>', methods=['POST'])
@@ -1549,9 +1551,17 @@ def purge_node(node_id):
                 json.dump(db, f)
                 
     if os.path.exists(BACKUP_DIR):
-        for f in os.listdir(BACKUP_DIR):
-            if f.startswith(f"backup_{node_id}_") or f.startswith(f"node_backup__{node_id}__"):
-                os.remove(os.path.join(BACKUP_DIR, f))
+        for root, _, files in os.walk(BACKUP_DIR):
+            for f in files:
+                if (
+                    f.startswith(f"backup_{node_id}_")
+                    or f.startswith(f"node_backup__{node_id}__")
+                    or f"__{node_id}__" in f
+                ):
+                    try:
+                        os.remove(os.path.join(root, f))
+                    except Exception:
+                        pass
     log_activity("Purge Node Data", f"node={node_id}", "error")
     return redirect(request.referrer)
 
@@ -1606,9 +1616,9 @@ def create_full_backup():
     log_activity("Create Full Backup", f"file={filename} users={len(users_db)}", "info")
     return redirect(request.referrer or url_for('dashboard'))
 
-@app.route('/restore_full_backup/<filename>', methods=['POST'])
-def restore_full_backup(filename):
-    path = safe_backup_path(BACKUP_DIR, filename)
+@app.route('/restore_full_backup/<path:backup_ref>', methods=['POST'])
+def restore_full_backup(backup_ref):
+    path = safe_backup_path(BACKUP_DIR, backup_ref)
     if not path or not os.path.exists(path):
         return redirect(request.referrer or url_for('dashboard'))
 
@@ -1657,7 +1667,7 @@ def restore_full_backup(filename):
         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
         execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
 
-    log_activity("Restore Full Backup", f"file={filename} users={len(users_db)}", "success")
+    log_activity("Restore Full Backup", f"file={backup_ref} users={len(users_db)}", "success")
     return redirect(url_for('dashboard'))
 
 @app.route('/upload_backup', methods=['POST'])
