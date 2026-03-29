@@ -213,10 +213,10 @@ def start_backup_scheduler(load_config_fn, save_config_fn, create_backup_file_fn
         while True:
             try:
                 cfg = load_config_fn() or {}
-                enabled = bool(cfg.get("backup_bot_enabled", False))
                 token = str(cfg.get("backup_bot_token", "")).strip()
                 admin_id = str(cfg.get("backup_bot_admin_id", "")).strip()
-                if not enabled or not token or not admin_id:
+                # Manual Telegram commands should work even when auto-send is disabled.
+                if not token or not admin_id:
                     time.sleep(5)
                     continue
 
