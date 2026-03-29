@@ -1708,6 +1708,10 @@ def create_full_backup():
 @app.route('/save_backup_bot_settings', methods=['POST'])
 def save_backup_bot_settings():
     cfg = load_config()
+    old_enabled = bool(cfg.get('backup_bot_enabled', False))
+    old_token = str(cfg.get('backup_bot_token', '')).strip()
+    old_admin = str(cfg.get('backup_bot_admin_id', '')).strip()
+    old_interval = float(cfg.get('backup_bot_interval_minutes', 60) or 60)
     cfg['backup_bot_enabled'] = request.form.get('backup_bot_enabled') == 'on'
     cfg['backup_bot_token'] = str(request.form.get('backup_bot_token', '')).strip()
     cfg['backup_bot_admin_id'] = str(request.form.get('backup_bot_admin_id', '')).strip()
@@ -1726,6 +1730,15 @@ def save_backup_bot_settings():
     cfg['backup_bot_interval_minutes'] = max(1.0, m)
     # Keep old config key updated for backward compatibility.
     cfg['backup_bot_interval_hours'] = cfg['backup_bot_interval_minutes'] / 60.0
+    changed = (
+        old_enabled != cfg['backup_bot_enabled'] or
+        old_token != cfg['backup_bot_token'] or
+        old_admin != cfg['backup_bot_admin_id'] or
+        abs(old_interval - cfg['backup_bot_interval_minutes']) > 1e-9
+    )
+    if cfg['backup_bot_enabled'] and changed:
+        # Trigger next autosend cycle quickly after settings change.
+        cfg['backup_bot_last_sent_ts'] = 0
     save_config(cfg)
     log_activity("Save Backup Bot Settings", f"enabled={cfg['backup_bot_enabled']} interval={cfg['backup_bot_interval_minutes']}m", "info")
     return redirect(url_for('dashboard'))
@@ -1930,7 +1943,7 @@ start_backup_scheduler(
     save_config,
     create_full_backup_file,
     log_fn=log_activity,
-    poll_seconds=60
+    poll_seconds=15
 )
 
 if __name__ == "__main__":

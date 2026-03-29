@@ -38,6 +38,15 @@ def _telegram_api_post(bot_token, method, data=None, timeout=30):
         return False, str(e), {}
 
 
+def _notify_admin_text(bot_token, admin_id, text):
+    _telegram_api_post(
+        bot_token,
+        "sendMessage",
+        data={"chat_id": str(admin_id or "").strip(), "text": str(text or "")[:3500]},
+        timeout=20
+    )
+
+
 def _telegram_get_updates(bot_token, offset=None, timeout=20):
     token = str(bot_token or "").strip()
     if not token:
@@ -182,8 +191,11 @@ def start_backup_scheduler(load_config_fn, save_config_fn, create_backup_file_fn
                     last_sent = float(cfg.get("backup_bot_last_sent_ts", 0) or 0)
                 except Exception:
                     last_sent = 0.0
-
                 now = time.time()
+                if last_sent > now + 300:
+                    # Defensive: if timestamp is accidentally in the future, do not stall autosend.
+                    last_sent = 0.0
+
                 due = enabled and token and admin_id and (now - last_sent >= interval_minutes * 60.0)
                 if due:
                     backup_result = create_backup_file_fn("auto_telegram")
@@ -204,10 +216,11 @@ def start_backup_scheduler(load_config_fn, save_config_fn, create_backup_file_fn
                         _log(f"Auto backup sent: {backup_ref}", "success")
                     else:
                         _log(f"Auto backup send failed: {msg}", "error")
+                        _notify_admin_text(token, admin_id, f"Auto backup failed: {msg[:240]}")
             except Exception as e:
                 _log(f"Scheduler error: {e}", "error")
 
-            time.sleep(max(20, int(poll_seconds)))
+            time.sleep(max(5, int(poll_seconds)))
 
     def _bot_listener():
         while True:
