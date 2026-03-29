@@ -18,7 +18,8 @@ def load_config():
         "backup_bot_admin_id": "",
         "backup_bot_interval_hours": 1,
         "backup_bot_interval_minutes": 60,
-        "backup_bot_last_sent_ts": 0
+        "backup_bot_last_sent_ts": 0,
+        "backup_bot_last_update_id": 0
     }
     if os.path.exists(CONFIG_FILE):
         try:

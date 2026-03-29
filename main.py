@@ -1916,11 +1916,11 @@ def clear_activity_logs():
         pass
     return redirect(url_for('dashboard'))
 
-# Background scheduler for hourly Telegram backup delivery.
+# Background scheduler for Telegram backup delivery.
 start_backup_scheduler(
     load_config,
     save_config,
-    lambda source: create_full_backup_file(source)[:2],
+    create_full_backup_file,
     log_fn=log_activity,
     poll_seconds=60
 )
