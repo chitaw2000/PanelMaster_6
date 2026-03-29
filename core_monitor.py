@@ -158,14 +158,32 @@ def sync_usage_to_subpanel(username, uinfo):
 def get_user_monitor_ips(uinfo, groups):
     ips = []
     group_id = uinfo.get('group')
+    target_node = uinfo.get('node')
+
+    g_nodes = {}
     if group_id:
-        g_nodes = groups.get(group_id, {}).get("nodes", {})
+        g_nodes = (groups.get(group_id, {}) or {}).get("nodes", {})
+
+        # Fallback for stale/incorrect group id: infer by current node membership.
+        if not g_nodes and target_node:
+            target_norm = str(target_node).strip().lower()
+            for _, gdata in groups.items():
+                nodes = (gdata or {}).get("nodes", {})
+                for nid in nodes.keys():
+                    if str(nid).strip().lower() == target_norm:
+                        g_nodes = nodes
+                        break
+                if g_nodes:
+                    break
+
+    if g_nodes:
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if nip:
                 ips.append(str(nip).strip())
     else:
-        nip = get_target_ip(uinfo.get('node'))
+        # Final fallback: at least monitor active node to keep auto-block working.
+        nip = get_target_ip(target_node)
         if nip:
             ips.append(str(nip).strip())
     # Keep unique order
