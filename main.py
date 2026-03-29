@@ -17,10 +17,13 @@ from core_api import api_bp
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
+ACTIVITY_LOG_FILE = "/root/PanelMaster/dashboard_activity_log.json"
 MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 if not os.path.exists(BACKUP_DIR): 
     os.makedirs(BACKUP_DIR)
+if not os.path.exists(os.path.dirname(ACTIVITY_LOG_FILE)):
+    os.makedirs(os.path.dirname(ACTIVITY_LOG_FILE), exist_ok=True)
 
 # 🚀 API Routes များကို Flask ထဲသို့ ပေါင်းထည့်ခြင်း
 app.register_blueprint(api_bp)
@@ -106,6 +109,29 @@ def measure_ping_latency_ms(ip):
         return round(float(m.group(1)), 2)
     except Exception:
         return None
+
+def log_activity(action, details="", level="info"):
+    try:
+        entry = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "action": str(action or "").strip(),
+            "details": str(details or "").strip(),
+            "level": str(level or "info").strip().lower()
+        }
+        with db_lock:
+            history = []
+            if os.path.exists(ACTIVITY_LOG_FILE):
+                try:
+                    with open(ACTIVITY_LOG_FILE, 'r') as f:
+                        history = json.load(f)
+                except Exception:
+                    history = []
+            history.insert(0, entry)
+            history = history[:500]
+            with open(ACTIVITY_LOG_FILE, 'w') as f:
+                json.dump(history, f, indent=2)
+    except Exception:
+        pass
 
 @app.route('/api/user_ip/<username>')
 def api_user_ip(username):
@@ -215,6 +241,13 @@ def dashboard():
             except: pass
                 
     config = load_config()
+    activity_logs = []
+    if os.path.exists(ACTIVITY_LOG_FILE):
+        try:
+            with open(ACTIVITY_LOG_FILE, 'r') as f:
+                activity_logs = json.load(f)
+        except Exception:
+            activity_logs = []
     active_users = check_live_status(db)
     node_stats = []
     group_stats = []
@@ -287,7 +320,18 @@ def dashboard():
             
     auto_backups = {k: v for k, v in auto_backups.items() if v["nodes"]}
 
-    return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, custom_backups=custom_backups, auto_backups=auto_backups, orphaned_backups=orphaned_backups, sick_nodes=sick_nodes, sick_count=sick_count)
+    return render_template(
+        'dashboard.html',
+        nodes=node_stats,
+        groups=group_stats,
+        config=config,
+        custom_backups=custom_backups,
+        auto_backups=auto_backups,
+        orphaned_backups=orphaned_backups,
+        sick_nodes=sick_nodes,
+        sick_count=sick_count,
+        activity_logs=activity_logs[:200]
+    )
 
 @app.route('/add_auto_group', methods=['POST'])
 def add_auto_group():
@@ -300,6 +344,7 @@ def add_auto_group():
         groups = load_auto_groups()
         groups[gid] = {"name": gname, "limit": limit, "api_domain": api_domain, "nodes": {}}
         save_auto_groups(groups)
+        log_activity("Add Auto Group", f"group={gid} name={gname} limit={limit}", "success")
     return redirect(url_for('dashboard'))
 
 @app.route('/delete_auto_group/<group_id>', methods=['POST'])
@@ -308,6 +353,7 @@ def delete_auto_group(group_id):
     if group_id in groups:
         del groups[group_id]
         save_auto_groups(groups)
+        log_activity("Delete Auto Group", f"group={group_id}", "warning")
     return redirect(url_for('dashboard'))
 
 @app.route('/group/<group_id>')
@@ -568,6 +614,7 @@ def add_server_to_group(group_id):
         groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
         save_auto_groups(groups)
         threading.Thread(target=deploy_and_sync_group_node, args=(group_id, nid, nip), daemon=True).start()
+        log_activity("Add Server To Group", f"group={group_id} node={nid} ip={nip}", "success")
         
     return redirect(f'/group/{group_id}?newly_added={nid}')
 
@@ -591,6 +638,7 @@ def resync_server_to_subpanel(group_id, node_id):
         args=(group_id, node_id, node_ip),
         daemon=True
     ).start()
+    log_activity("Manual Resync", f"group={group_id} node={node_id}", "info")
     return redirect(request.referrer or f'/group/{group_id}')
 
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
@@ -611,6 +659,7 @@ def delete_server_from_group(group_id, node_id):
                 users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
         if users_to_delete: 
             bulk_delete_keys(users_to_delete)
+    log_activity("Delete Server From Group", f"group={group_id} node={node_id}", "warning")
             
     return redirect(f'/group/{group_id}')
 
@@ -620,6 +669,7 @@ def edit_group_limit(group_id):
     success, msg = rebalance_auto_node(group_id, new_limit)
     if not success: 
         return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
+    log_activity("Edit Group Limit", f"group={group_id} limit={new_limit}", "info")
     return redirect(f'/group/{group_id}')
 
 @app.route('/edit_server_limit/<group_id>/<node_id>', methods=['POST'])
@@ -628,6 +678,7 @@ def edit_server_limit(group_id, node_id):
     success, msg = rebalance_auto_node(group_id, new_limit, specific_node=node_id)
     if not success: 
         return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
+    log_activity("Edit Server Limit", f"group={group_id} node={node_id} limit={new_limit}", "info")
     return redirect(f'/group/{group_id}')
 
 @app.route('/add_user_auto', methods=['POST'])
@@ -658,6 +709,7 @@ def add_user_auto():
     success, msg = add_keys(None, gid, raw_usernames, gb, days, proto, is_auto=True)
     if not success: 
         return f"<script>alert('{msg}'); window.history.back();</script>"
+    log_activity("Add Auto Users", f"group={gid} mode={mode} protocol={proto}", "success")
     return redirect(f'/group/{gid}')
 
 # 🚀 ဒီလမ်းကြောင်းလေးက ပြဿနာရဲ့ အဓိက တရားခံပဲ! 🚀
@@ -815,6 +867,7 @@ def add_node():
                 
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
+        log_activity("Add Custom Node", f"node={n_id} name={n_name} ip={n_ip}", "success")
             
     return redirect(f"/node/{n_id}?newly_added={n_id}")
 
@@ -849,7 +902,9 @@ def delete_node(node_id):
         save_config(config)
         
     if is_auto: 
+        log_activity("Delete Node", f"node={node_id} scope=auto-group", "warning")
         return redirect(request.referrer)
+    log_activity("Delete Node", f"node={node_id} scope=custom", "warning")
     return redirect(url_for('dashboard'))
 
 @app.route('/replace_id/<current_id>', methods=['POST'])
@@ -1045,18 +1100,22 @@ def install_node_action(node_id):
         )
         if verify_res.returncode != 0:
             err = (verify_res.stderr or verify_res.stdout or "xray not ready").strip()
+            log_activity("Install Xray Failed", f"node={node_id} error={err[:140]}", "error")
             if wants_json:
                 return jsonify({"success": False, "error": err[:500]}), 500
             return redirect(request.referrer or url_for('dashboard'))
 
+        log_activity("Install Xray Success", f"node={node_id}", "success")
         if wants_json:
             return jsonify({"success": True, "message": "Xray installed and ready"})
         return redirect(request.referrer or url_for('dashboard'))
     except subprocess.TimeoutExpired:
+        log_activity("Install Xray Timeout", f"node={node_id}", "error")
         if wants_json:
             return jsonify({"success": False, "error": "Install timeout"}), 504
         return redirect(request.referrer or url_for('dashboard'))
     except Exception as e:
+        log_activity("Install Xray Error", f"node={node_id} error={str(e)[:140]}", "error")
         if wants_json:
             return jsonify({"success": False, "error": str(e)}), 500
         return redirect(request.referrer or url_for('dashboard'))
@@ -1066,6 +1125,7 @@ def restart_xray_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
         execute_ssh_bg(ip, ["systemctl restart xray"])
+    log_activity("Restart Xray", f"node={node_id}", "info")
     return redirect(request.referrer)
 
 @app.route('/hard_reset_node_keys/<node_id>', methods=['POST'])
@@ -1106,6 +1166,7 @@ def hard_reset_node_keys(node_id):
         "'"
     )
     execute_ssh_bg(str(ip).strip(), [cleanup_cmd])
+    log_activity("Hard Reset Node Keys", f"node={node_id}", "warning")
     return redirect(request.referrer or f"/node/{node_id}")
 
 @app.route('/toggle_node/<node_id>', methods=['POST'])
@@ -1119,9 +1180,11 @@ def toggle_node(node_id):
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
         if ip: execute_ssh_bg(ip, ["systemctl start xray"])
+        log_activity("Enable Node", f"node={node_id}", "success")
     else:
         config['disabled_nodes'].append(node_id)
         if ip: execute_ssh_bg(ip, ["systemctl stop xray"])
+        log_activity("Disable Node", f"node={node_id}", "warning")
         
     save_config(config)
     return redirect(request.referrer)
@@ -1164,12 +1227,14 @@ def add_user_manual():
     success, msg = add_keys(nid, gid, raw_usernames, gb, days, proto, is_auto=False)
     if not success: 
         return f"<script>alert('{msg}'); window.history.back();</script>"
+    log_activity("Add Manual Users", f"node={nid} mode={mode} protocol={proto}", "success")
         
     return redirect(request.referrer)
 
 @app.route('/toggle_user/<username>', methods=['POST'])
 def toggle_user(username):
     toggle_key(username)
+    log_activity("Toggle User Status", f"user={username}", "warning")
     return redirect(request.referrer)
 
 @app.route('/switch_user_node/<username>', methods=['POST'])
@@ -1271,6 +1336,7 @@ def switch_user_node(username):
             json.dump(db, f, indent=4)
 
     # Pre-provision mode: UI switch တွင် DB/key server သာ ပြောင်းမည် (node sync မလုပ်တော့)
+    log_activity("Switch User Node", f"user={username} from={old_node} to={target_node}", "info")
 
     return redirect(request.referrer or url_for('dashboard'))
 
@@ -1306,6 +1372,7 @@ def edit_user_route(username):
                         cmd = f"sed -i 's/{old_uuid}/{new_uuid}/g' /usr/local/etc/xray/config.json && systemctl restart xray"
                         execute_ssh_bg(node_ip, [cmd])
 
+    log_activity("Edit User", f"user={username}", "info")
     return redirect(request.referrer)
 
 @app.route('/renew_user/<username>', methods=['POST'])
@@ -1315,17 +1382,20 @@ def renew_user_route(username):
     try: add_days = int(request.form.get('add_days') or 30)
     except: add_days = 30
     renew_key(username, add_gb, add_days)
+    log_activity("Renew User", f"user={username} gb={add_gb} days={add_days}", "success")
     return redirect(request.referrer)
 
 @app.route('/delete_user/<username>', methods=['POST'])
 def delete_user_route(username):
     delete_key(username)
+    log_activity("Delete User", f"user={username}", "warning")
     return redirect(request.referrer)
 
 @app.route('/bulk_delete', methods=['POST'])
 def bulk_delete_route():
     usernames = request.form.getlist('usernames')
     bulk_delete_keys(usernames)
+    log_activity("Bulk Delete Users", f"count={len(usernames)}", "warning")
     return redirect(request.referrer)
 
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
@@ -1343,6 +1413,7 @@ def create_node_backup(node_id):
         if node_data:
             with open(os.path.join(BACKUP_DIR, backup_name), 'w') as f: 
                 json.dump(node_data, f, indent=4)
+            log_activity("Create Node Backup", f"node={node_id} users={len(node_data)}", "info")
     return redirect(request.referrer)
 
 @app.route('/download_backup/<filename>')
@@ -1357,6 +1428,7 @@ def delete_backup(filename):
     path = os.path.join(BACKUP_DIR, filename)
     if os.path.exists(path): 
         os.remove(path)
+        log_activity("Delete Backup", f"file={filename}", "warning")
     return redirect(request.referrer)
 
 @app.route('/purge_node/<node_id>', methods=['POST'])
@@ -1375,6 +1447,7 @@ def purge_node(node_id):
         for f in os.listdir(BACKUP_DIR):
             if f.startswith(f"backup_{node_id}_"): 
                 os.remove(os.path.join(BACKUP_DIR, f))
+    log_activity("Purge Node Data", f"node={node_id}", "error")
     return redirect(request.referrer)
 
 @app.route('/download_backup_global')
@@ -1434,9 +1507,11 @@ def upload_backup():
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
+        log_activity("Restore Backup", f"users={len(uploaded_data)}", "success")
             
     except Exception as e:
         print(f"Restore Error: {e}")
+        log_activity("Restore Backup Failed", str(e)[:140], "error")
         
     return redirect(url_for('dashboard'))
 
@@ -1447,6 +1522,7 @@ def save_settings_basic():
     except: config['interval'] = 12
     config['bot_token'] = request.form.get('bot_token', '')
     save_config(config)
+    log_activity("Save Settings", "Updated bot token/interval", "info")
     return redirect(url_for('dashboard'))
 
 @app.route('/config_action', methods=['POST'])
@@ -1465,6 +1541,17 @@ def config_action():
             config[target_list].remove(val)
             
     save_config(config)
+    log_activity("Config Action", f"type={ctype} action={action} value={val}", "info")
+    return redirect(url_for('dashboard'))
+
+@app.route('/clear_activity_logs', methods=['POST'])
+def clear_activity_logs():
+    try:
+        with db_lock:
+            with open(ACTIVITY_LOG_FILE, 'w') as f:
+                json.dump([], f, indent=2)
+    except Exception:
+        pass
     return redirect(url_for('dashboard'))
 
 if __name__ == "__main__":
