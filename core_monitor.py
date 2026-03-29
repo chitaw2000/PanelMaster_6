@@ -3,7 +3,7 @@ from datetime import datetime
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import get_safe_delete_cmd
+from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
     from config import USERS_DB, NODES_LIST, load_config
@@ -80,17 +80,23 @@ def suspend_user_everywhere(username, uinfo):
         total_targets += 1
         cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
         if proto == 'v2':
-            full_del = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; systemctl restart xray'"
+            remote_cmd = f"export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; systemctl restart xray"
         else:
-            full_del = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
+            remote_cmd = f"export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
         try:
-            res = subprocess.run(full_del, shell=True, capture_output=True, text=True, timeout=25)
+            # Use argv form (no shell quoting pitfalls) so usernames/commands stay intact.
+            res = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", f"root@{nip}", remote_cmd],
+                capture_output=True,
+                text=True,
+                timeout=25
+            )
             if res.returncode == 0:
                 ok_count += 1
             else:
-                subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                execute_ssh_bg(nip, [remote_cmd])
         except Exception:
-            subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            execute_ssh_bg(nip, [remote_cmd])
 
     # Enforced only when deletion succeeds on every reachable target node.
     return total_targets > 0 and ok_count == total_targets
