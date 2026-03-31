@@ -203,19 +203,10 @@ def get_user_monitor_ips(uinfo, groups):
         if nip:
             ips.append(str(nip).strip())
 
-    # Pre-provision safety fallback:
-    # For SS users with missing/bad group mapping, monitor all known nodes so
-    # live traffic on any node still contributes to used_bytes.
-    if not ips and proto != 'v2':
-        for nid in get_all_servers().keys():
-            nip = get_target_ip(nid)
-            if nip:
-                ips.append(str(nip).strip())
-
-    # If only one fallback IP is found for SS users, broaden to all nodes too.
-    # This avoids "old usage shows once, then new usage stuck" when active node
-    # changed but DB group/node mapping is stale.
-    if proto != 'v2' and len(ips) <= 1:
+    # Pre-provision safety:
+    # For SS users, always include all known nodes to avoid stale group/node
+    # mapping issues where new traffic on a switched/repaired node is missed.
+    if proto != 'v2':
         for nid in get_all_servers().keys():
             nip = get_target_ip(nid)
             if nip:
