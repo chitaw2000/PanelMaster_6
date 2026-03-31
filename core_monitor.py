@@ -14,6 +14,48 @@ except ImportError:
 
 _IP_FAIL_CACHE = {}
 _IP_FAIL_LOCK = threading.Lock()
+_MONITOR_STATUS = {
+    "thread_started": False,
+    "started_at": 0,
+    "last_loop_at": 0,
+    "last_error": "",
+    "loop_count": 0,
+    "last_sync_attempt_at": 0,
+    "last_sync_ok_at": 0,
+    "last_sync_user": "",
+    "last_sync_status": ""
+}
+_MONITOR_STATUS_LOCK = threading.Lock()
+
+
+def _set_monitor_status(**kwargs):
+    with _MONITOR_STATUS_LOCK:
+        _MONITOR_STATUS.update(kwargs)
+
+
+def get_monitor_status():
+    with _MONITOR_STATUS_LOCK:
+        return dict(_MONITOR_STATUS)
+
+
+def _parse_monitor_interval(raw_interval):
+    try:
+        val = float(raw_interval)
+    except Exception:
+        return 12.0
+    if val < 1.0:
+        return 1.0
+    return val
+
+
+def _get_sync_targets():
+    primary = str(os.environ.get("PANEL_SYNC_PRIMARY_URL", "https://dash1.dabazinme.me/api/internal/sync-user-usage")).strip()
+    fallback = str(os.environ.get("PANEL_SYNC_FALLBACK_URL", "https://dash1.dabazinme.me/admin/api/internal/sync-user-usage")).strip()
+    out = []
+    for url in (primary, fallback):
+        if url and url not in out:
+            out.append(url)
+    return out
 
 
 def _skip_ip_temporarily(ip):
@@ -158,6 +200,8 @@ def query_ip_user_totals(ip):
 def sync_usage_to_subpanel(username, uinfo):
     # Best-effort usage sync for external panel.
     try:
+        now_ts = int(time.time())
+        _set_monitor_status(last_sync_attempt_at=now_ts, last_sync_user=str(username))
         used_bytes = float(uinfo.get('used_bytes', 0) or 0)
         total_gb = float(uinfo.get('total_gb', 0) or 0)
         used_gb = used_bytes / (1024 ** 3)
@@ -173,25 +217,31 @@ def sync_usage_to_subpanel(username, uinfo):
         }
 
         headers = {"Content-Type": "application/json", "x-api-key": MASTER_API_KEY}
-        urls = [
-            "http://167.172.91.222:4000/api/internal/sync-user-usage",
-            "http://167.172.91.222:4000/admin/api/internal/sync-user-usage"
-        ]
+        urls = _get_sync_targets()
 
         delivered = False
         for url in urls:
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=6)
+                body_preview = (r.text or "").strip().replace("\n", " ")[:240]
+                print(f"[usage-sync] user={username} url={url} status={r.status_code} body={body_preview}")
                 if 200 <= r.status_code < 300:
                     delivered = True
+                    _set_monitor_status(
+                        last_sync_ok_at=now_ts,
+                        last_sync_user=str(username),
+                        last_sync_status=f"{r.status_code} {url}"
+                    )
                     break
             except Exception:
-                pass
+                print(f"[usage-sync] user={username} url={url} error=request_failed")
 
         if not delivered:
-            print(f"Usage Sync Failed for {username}")
+            _set_monitor_status(last_sync_status="failed_all_targets", last_sync_user=str(username))
+            print(f"[usage-sync] user={username} result=failed_all_targets")
     except Exception:
-        pass
+        _set_monitor_status(last_sync_status="exception", last_sync_user=str(username))
+        print(f"[usage-sync] user={username} result=exception")
 
 def get_user_monitor_ips(uinfo, groups, monitor_skip_nodes=None):
     ips = []
@@ -241,17 +291,23 @@ def get_user_monitor_ips(uinfo, groups, monitor_skip_nodes=None):
     return out
 
 def monitor_traffic():
+    _set_monitor_status(thread_started=True, started_at=int(time.time()))
+    print("[monitor] traffic monitor thread started")
     while True:
         try:
             config = load_config()
-            interval = config.get('interval', 12)
+            interval = _parse_monitor_interval(config.get('interval', 12))
             monitor_skip_nodes = config.get('monitor_skip_nodes', [])
         except:
-            interval = 12
+            interval = 12.0
             monitor_skip_nodes = []
 
-        time.sleep(interval)
         try:
+            time.sleep(interval)
+        except Exception:
+            time.sleep(12.0)
+        try:
+            _set_monitor_status(last_loop_at=int(time.time()), loop_count=int(get_monitor_status().get("loop_count", 0)) + 1)
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
                 with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -376,7 +432,8 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
                     
         except Exception as e:
-            pass
+            _set_monitor_status(last_error=str(e)[:300])
+            print(f"[monitor] loop error: {e}")
 
 def start_background_monitor():
     t = threading.Thread(target=monitor_traffic, daemon=True)

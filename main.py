@@ -8,7 +8,7 @@ from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_G
 from core_auto import load_auto_groups, save_auto_groups
 
 from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cmd
-from core_monitor import start_background_monitor
+from core_monitor import start_background_monitor, get_monitor_status
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
 from core_ip import get_active_ips
 from core_backup import (
@@ -1607,6 +1607,11 @@ def api_search_all():
         "nodes": node_results,
         "users": user_results
     })
+
+
+@app.route('/api/internal/monitor-status')
+def api_internal_monitor_status():
+    return jsonify({"status": "ok", "monitor": get_monitor_status()})
 
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):
