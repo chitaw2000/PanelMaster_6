@@ -193,10 +193,13 @@ def sync_usage_to_subpanel(username, uinfo):
     except Exception:
         pass
 
-def get_user_monitor_ips(uinfo, groups):
+def get_user_monitor_ips(uinfo, groups, monitor_skip_nodes=None):
     ips = []
     group_id = uinfo.get('group')
     target_node = uinfo.get('node')
+    skip_set = set()
+    if isinstance(monitor_skip_nodes, (list, tuple, set)):
+        skip_set = {str(x).strip().lower() for x in monitor_skip_nodes if str(x).strip()}
 
     g_nodes = {}
     if group_id:
@@ -216,11 +219,15 @@ def get_user_monitor_ips(uinfo, groups):
 
     if g_nodes:
         for nid in g_nodes:
+            if str(nid).strip().lower() in skip_set:
+                continue
             nip = get_target_ip(nid)
             if nip:
                 ips.append(str(nip).strip())
     else:
         # Final fallback: at least monitor active node to keep auto-block working.
+        if str(target_node).strip().lower() in skip_set:
+            target_node = ""
         nip = get_target_ip(target_node)
         if nip:
             ips.append(str(nip).strip())
@@ -238,8 +245,10 @@ def monitor_traffic():
         try:
             config = load_config()
             interval = config.get('interval', 12)
+            monitor_skip_nodes = config.get('monitor_skip_nodes', [])
         except:
             interval = 12
+            monitor_skip_nodes = []
 
         time.sleep(interval)
         try:
@@ -258,7 +267,7 @@ def monitor_traffic():
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False):
                     continue
-                ips = get_user_monitor_ips(uinfo, groups)
+                ips = get_user_monitor_ips(uinfo, groups, monitor_skip_nodes=monitor_skip_nodes)
                 if ips:
                     user_ips_map[uname] = ips
                     all_ips.update(ips)

@@ -21,6 +21,7 @@ def load_config():
         "auth_otp_ttl_seconds": 300,
         "api_key_clients": [],
         "disabled_nodes": [],
+        "monitor_skip_nodes": [],
         "backup_bot_enabled": False,
         "backup_bot_token": "",
         "backup_bot_admin_id": "",
@@ -37,6 +38,7 @@ def load_config():
                 if not isinstance(config.get('admin_ids'), list): config['admin_ids'] = []
                 if not isinstance(config.get('mod_ids'), list): config['mod_ids'] = []
                 if not isinstance(config.get('disabled_nodes'), list): config['disabled_nodes'] = []
+                if not isinstance(config.get('monitor_skip_nodes'), list): config['monitor_skip_nodes'] = []
         except: pass
     return config
 

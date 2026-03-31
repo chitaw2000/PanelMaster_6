@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
 import json, os, re, secrets, subprocess, urllib.parse, base64, threading, time, requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, MASTER_API_KEY, load_config, save_config
@@ -1395,6 +1396,138 @@ def api_ping(node_id):
     if latency_ms is None:
         return jsonify({"status": "offline"})
     return jsonify({"status": "online", "latency_ms": latency_ms})
+
+
+def _probe_node_xray_health(node_id, node_info):
+    ip = str((node_info or {}).get("ip", "")).strip()
+    name = str((node_info or {}).get("name", node_id)).strip() or str(node_id)
+    base = {"id": str(node_id), "name": name, "ip": ip}
+    if not ip:
+        base["status"] = "invalid"
+        base["reason"] = "missing_ip"
+        return base
+
+    cmd = (
+        f"ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=no root@{ip} "
+        "'systemctl is-active xray 2>/dev/null || true'"
+    )
+    try:
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
+        out = str(res.stdout or "").strip().lower()
+        err = str(res.stderr or "").strip().lower()
+        if out == "active":
+            base["status"] = "active"
+            return base
+        if out in ("inactive", "failed", "activating", "deactivating", "unknown"):
+            base["status"] = "inactive"
+            base["reason"] = out
+            return base
+        if (
+            res.returncode == 255
+            or "permission denied" in err
+            or "no route to host" in err
+            or "connection refused" in err
+            or "connection timed out" in err
+            or "operation timed out" in err
+        ):
+            base["status"] = "unreachable"
+            base["reason"] = "ssh_unreachable"
+            return base
+        base["status"] = "inactive"
+        base["reason"] = out or "unknown"
+        return base
+    except Exception:
+        base["status"] = "unreachable"
+        base["reason"] = "timeout_or_error"
+        return base
+
+
+@app.route('/settings/node-health')
+def settings_node_health():
+    all_nodes = get_all_servers()
+    cfg = load_config()
+    monitor_skip_set = {
+        str(x).strip().lower()
+        for x in (cfg.get("monitor_skip_nodes", []) or [])
+        if str(x).strip()
+    }
+    items = []
+    if not all_nodes:
+        return jsonify({
+            "status": "ok",
+            "checked": 0,
+            "inactive_count": 0,
+            "inactive_nodes": [],
+            "nodes": []
+        })
+
+    max_workers = min(12, max(1, len(all_nodes)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_probe_node_xray_health, node_id, ninfo): node_id
+            for node_id, ninfo in all_nodes.items()
+        }
+        for fut in as_completed(futures):
+            try:
+                items.append(fut.result())
+            except Exception:
+                node_id = str(futures[fut])
+                items.append({
+                    "id": node_id,
+                    "name": node_id,
+                    "ip": "",
+                    "status": "unreachable",
+                    "reason": "probe_failed"
+                })
+
+    items.sort(key=lambda x: str(x.get("id", "")).lower())
+    for row in items:
+        row["monitor_skipped"] = str(row.get("id", "")).strip().lower() in monitor_skip_set
+    inactive_nodes = [x for x in items if str(x.get("status")) != "active"]
+    return jsonify({
+        "status": "ok",
+        "checked": len(items),
+        "inactive_count": len(inactive_nodes),
+        "inactive_nodes": inactive_nodes,
+        "nodes": items
+    })
+
+
+@app.route('/api/settings/monitor-skip/<node_id>', methods=['POST'])
+def api_settings_monitor_skip(node_id):
+    node_id = str(node_id or "").strip()
+    if not node_id:
+        return jsonify({"status": "error", "msg": "node_id required"}), 400
+
+    all_nodes = get_all_servers()
+    node_exists = any(str(nid).strip().lower() == node_id.lower() for nid in all_nodes.keys())
+    if not node_exists:
+        return jsonify({"status": "error", "msg": "Node not found"}), 404
+
+    cfg = load_config()
+    arr = cfg.get("monitor_skip_nodes", [])
+    if not isinstance(arr, list):
+        arr = []
+
+    node_norm = node_id.lower()
+    existing = {str(x).strip().lower(): str(x).strip() for x in arr if str(x).strip()}
+    action = str(request.args.get("action", "toggle")).strip().lower()
+
+    if action == "enable":
+        existing[node_norm] = node_id
+    elif action == "disable":
+        existing.pop(node_norm, None)
+    else:
+        if node_norm in existing:
+            existing.pop(node_norm, None)
+        else:
+            existing[node_norm] = node_id
+
+    cfg["monitor_skip_nodes"] = list(existing.values())
+    save_config(cfg)
+    skipped = node_norm in {str(x).strip().lower() for x in cfg.get("monitor_skip_nodes", [])}
+    log_activity("Monitor Skip Toggle", f"node={node_id} skipped={skipped}", "info")
+    return jsonify({"status": "ok", "node_id": node_id, "monitor_skipped": skipped})
 
 @app.route('/api/search_all')
 def api_search_all():
