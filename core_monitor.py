@@ -1,6 +1,5 @@
 import json, os, time, subprocess, threading, requests
 from datetime import datetime
-from urllib.parse import urlparse
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
@@ -116,34 +115,14 @@ def query_ip_user_totals(ip):
             p = s.get("name", "").split(">>>")
             val = float(s.get("value", 0) or 0)
             if len(p) >= 4 and p[0] == "user":
-                uname = str(p[1]).strip()
-                if uname:
-                    totals[uname] = totals.get(uname, 0.0) + val
-                    uname_l = uname.lower()
-                    if uname_l != uname:
-                        totals[uname_l] = totals.get(uname_l, 0.0) + val
+                uname = p[1]
+                totals[uname] = totals.get(uname, 0.0) + val
             elif len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
-                uname = str(p[1])[4:].strip()
-                if uname:
-                    totals[uname] = totals.get(uname, 0.0) + val
-                    uname_l = uname.lower()
-                    if uname_l != uname:
-                        totals[uname_l] = totals.get(uname_l, 0.0) + val
+                uname = str(p[1])[4:]
+                totals[uname] = totals.get(uname, 0.0) + val
     except Exception:
         pass
     return totals
-
-
-def lookup_user_total(ip_totals, username):
-    uname = str(username or "").strip()
-    if not uname:
-        return 0.0
-    if uname in ip_totals:
-        return float(ip_totals.get(uname, 0.0) or 0.0)
-    uname_l = uname.lower()
-    if uname_l in ip_totals:
-        return float(ip_totals.get(uname_l, 0.0) or 0.0)
-    return 0.0
 
 def sync_usage_to_subpanel(username, uinfo):
     # Best-effort usage sync for external panel.
@@ -221,39 +200,17 @@ def get_user_monitor_ips(uinfo, groups):
         if ip and ip not in seen:
             seen.add(ip)
             out.append(ip)
-
-    # Also include server IP parsed from current key URL.
-    # This helps when DB node/group mapping is stale but key already points to a
-    # new server (common after switch/restore flows).
-    key = str((uinfo or {}).get('key', '')).strip()
-    parsed_ip = None
-    try:
-        if key.startswith('ss://'):
-            after_at = key.split('@', 1)[1] if '@' in key else ''
-            host_port = after_at.split('#', 1)[0]
-            parsed_ip = host_port.rsplit(':', 1)[0].strip() if ':' in host_port else host_port.strip()
-        elif key.startswith('vless://'):
-            u = urlparse(key)
-            parsed_ip = str(u.hostname or '').strip()
-    except Exception:
-        parsed_ip = None
-    if parsed_ip and parsed_ip not in out:
-        out.append(parsed_ip)
     return out
 
 def monitor_traffic():
     while True:
         try:
             config = load_config()
-            interval_raw = config.get('interval', 12)
-            interval = float(interval_raw)
-        except Exception:
-            interval = 12.0
-        interval = max(1.0, interval)
-        try:
-            time.sleep(interval)
-        except Exception:
-            time.sleep(12)
+            interval = config.get('interval', 12)
+        except:
+            interval = 12
+
+        time.sleep(interval)
         try:
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
@@ -308,7 +265,7 @@ def monitor_traffic():
                 current_total = 0.0
 
                 for ip in user_ips_map[uname]:
-                    current_val = lookup_user_total(ip_totals_map.get(ip, {}), uname)
+                    current_val = float(ip_totals_map.get(ip, {}).get(uname, 0.0))
                     last_val = float(last_map.get(ip, 0.0) or 0.0)
 
                     diff = 0.0
@@ -379,7 +336,7 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
                     
         except Exception as e:
-            print(f"[monitor_traffic] loop error: {e}")
+            pass
 
 def start_background_monitor():
     t = threading.Thread(target=monitor_traffic, daemon=True)
