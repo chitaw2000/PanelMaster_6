@@ -222,22 +222,23 @@ def get_user_monitor_ips(uinfo, groups):
             seen.add(ip)
             out.append(ip)
 
-    # Last-resort fallback: parse server IP from current key URL.
-    if not out:
-        key = str((uinfo or {}).get('key', '')).strip()
+    # Also include server IP parsed from current key URL.
+    # This helps when DB node/group mapping is stale but key already points to a
+    # new server (common after switch/restore flows).
+    key = str((uinfo or {}).get('key', '')).strip()
+    parsed_ip = None
+    try:
+        if key.startswith('ss://'):
+            after_at = key.split('@', 1)[1] if '@' in key else ''
+            host_port = after_at.split('#', 1)[0]
+            parsed_ip = host_port.rsplit(':', 1)[0].strip() if ':' in host_port else host_port.strip()
+        elif key.startswith('vless://'):
+            u = urlparse(key)
+            parsed_ip = str(u.hostname or '').strip()
+    except Exception:
         parsed_ip = None
-        try:
-            if key.startswith('ss://'):
-                after_at = key.split('@', 1)[1] if '@' in key else ''
-                host_port = after_at.split('#', 1)[0]
-                parsed_ip = host_port.rsplit(':', 1)[0].strip() if ':' in host_port else host_port.strip()
-            elif key.startswith('vless://'):
-                u = urlparse(key)
-                parsed_ip = str(u.hostname or '').strip()
-        except Exception:
-            parsed_ip = None
-        if parsed_ip:
-            out.append(parsed_ip)
+    if parsed_ip and parsed_ip not in out:
+        out.append(parsed_ip)
     return out
 
 def monitor_traffic():
