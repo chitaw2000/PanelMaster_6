@@ -206,11 +206,16 @@ def monitor_traffic():
     while True:
         try:
             config = load_config()
-            interval = config.get('interval', 12)
-        except:
-            interval = 12
+            interval_raw = config.get('interval', 12)
+            interval = float(interval_raw)
+        except Exception:
+            interval = 12.0
+        interval = max(1.0, interval)
 
-        time.sleep(interval)
+        try:
+            time.sleep(interval)
+        except Exception:
+            time.sleep(12)
         try:
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
@@ -336,7 +341,7 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
                     
         except Exception as e:
-            pass
+            print(f"[monitor_traffic] loop error: {e}")
 
 def start_background_monitor():
     t = threading.Thread(target=monitor_traffic, daemon=True)
