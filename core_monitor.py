@@ -174,6 +174,7 @@ def get_user_monitor_ips(uinfo, groups):
     ips = []
     group_id = uinfo.get('group')
     target_node = uinfo.get('node')
+    proto = uinfo.get('protocol', 'out')
 
     g_nodes = {}
     if group_id:
@@ -201,6 +202,24 @@ def get_user_monitor_ips(uinfo, groups):
         nip = get_target_ip(target_node)
         if nip:
             ips.append(str(nip).strip())
+
+    # Pre-provision safety fallback:
+    # For SS users with missing/bad group mapping, monitor all known nodes so
+    # live traffic on any node still contributes to used_bytes.
+    if not ips and proto != 'v2':
+        for nid in get_all_servers().keys():
+            nip = get_target_ip(nid)
+            if nip:
+                ips.append(str(nip).strip())
+
+    # If only one fallback IP is found for SS users, broaden to all nodes too.
+    # This avoids "old usage shows once, then new usage stuck" when active node
+    # changed but DB group/node mapping is stale.
+    if proto != 'v2' and len(ips) <= 1:
+        for nid in get_all_servers().keys():
+            nip = get_target_ip(nid)
+            if nip:
+                ips.append(str(nip).strip())
     # Keep unique order
     seen = set()
     out = []
