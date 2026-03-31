@@ -115,11 +115,19 @@ def query_ip_user_totals(ip):
             p = s.get("name", "").split(">>>")
             val = float(s.get("value", 0) or 0)
             if len(p) >= 4 and p[0] == "user":
-                uname = p[1]
-                totals[uname] = totals.get(uname, 0.0) + val
+                uname = str(p[1]).strip()
+                if uname:
+                    totals[uname] = totals.get(uname, 0.0) + val
+                    uname_l = uname.lower()
+                    if uname_l != uname:
+                        totals[uname_l] = totals.get(uname_l, 0.0) + val
             elif len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
-                uname = str(p[1])[4:]
-                totals[uname] = totals.get(uname, 0.0) + val
+                uname = str(p[1])[4:].strip()
+                if uname:
+                    totals[uname] = totals.get(uname, 0.0) + val
+                    uname_l = uname.lower()
+                    if uname_l != uname:
+                        totals[uname_l] = totals.get(uname_l, 0.0) + val
     except Exception:
         pass
     return totals
@@ -270,7 +278,13 @@ def monitor_traffic():
                 current_total = 0.0
 
                 for ip in user_ips_map[uname]:
-                    current_val = float(ip_totals_map.get(ip, {}).get(uname, 0.0))
+                    ip_totals = ip_totals_map.get(ip, {})
+                    uname_key = str(uname).strip()
+                    uname_l = uname_key.lower()
+                    current_raw = ip_totals.get(uname_key, None)
+                    if current_raw is None:
+                        current_raw = ip_totals.get(uname_l, 0.0)
+                    current_val = float(current_raw or 0.0)
                     last_val = float(last_map.get(ip, 0.0) or 0.0)
 
                     diff = 0.0
