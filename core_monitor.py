@@ -6,11 +6,10 @@ from core_auto import load_auto_groups
 from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
-    from config import USERS_DB, NODES_LIST, MASTER_API_KEY, load_config
+    from config import USERS_DB, NODES_LIST, load_config
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
-    MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 _IP_FAIL_CACHE = {}
 _IP_FAIL_LOCK = threading.Lock()
@@ -49,13 +48,25 @@ def _parse_monitor_interval(raw_interval):
 
 
 def _get_sync_targets():
-    primary = str(os.environ.get("PANEL_SYNC_PRIMARY_URL", "https://dash1.dabazinme.me/api/internal/sync-user-usage")).strip()
-    fallback = str(os.environ.get("PANEL_SYNC_FALLBACK_URL", "https://dash1.dabazinme.me/admin/api/internal/sync-user-usage")).strip()
-    out = []
-    for url in (primary, fallback):
-        if url and url not in out:
-            out.append(url)
-    return out
+    # External panel currently exposes only this route.
+    primary = str(
+        os.environ.get(
+            "PANEL_SYNC_PRIMARY_URL",
+            "https://dash1.dabazinme.me/api/internal/sync-user-usage"
+        )
+    ).strip()
+    return [primary] if primary else []
+
+
+def _get_sync_api_key():
+    # Use dedicated sync key first; fallback to exact known value.
+    # This prevents old/wrong env keys from causing 401.
+    return str(
+        os.environ.get(
+            "PANEL_SYNC_API_KEY",
+            "pmk_XI1fBk3DEEekIDwgngJWQmjFXR0TziWkzw9UvmNB_Uk"
+        )
+    ).strip()
 
 
 def _skip_ip_temporarily(ip):
@@ -216,7 +227,7 @@ def sync_usage_to_subpanel(username, uinfo):
             "isBlocked": bool(uinfo.get('is_blocked', False))
         }
 
-        headers = {"Content-Type": "application/json", "x-api-key": MASTER_API_KEY}
+        headers = {"Content-Type": "application/json", "x-api-key": _get_sync_api_key()}
         urls = _get_sync_targets()
 
         delivered = False
