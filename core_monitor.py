@@ -115,14 +115,34 @@ def query_ip_user_totals(ip):
             p = s.get("name", "").split(">>>")
             val = float(s.get("value", 0) or 0)
             if len(p) >= 4 and p[0] == "user":
-                uname = p[1]
-                totals[uname] = totals.get(uname, 0.0) + val
+                uname = str(p[1]).strip()
+                if uname:
+                    totals[uname] = totals.get(uname, 0.0) + val
+                    uname_l = uname.lower()
+                    if uname_l != uname:
+                        totals[uname_l] = totals.get(uname_l, 0.0) + val
             elif len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
-                uname = str(p[1])[4:]
-                totals[uname] = totals.get(uname, 0.0) + val
+                uname = str(p[1])[4:].strip()
+                if uname:
+                    totals[uname] = totals.get(uname, 0.0) + val
+                    uname_l = uname.lower()
+                    if uname_l != uname:
+                        totals[uname_l] = totals.get(uname_l, 0.0) + val
     except Exception:
         pass
     return totals
+
+
+def lookup_user_total(ip_totals, username):
+    uname = str(username or "").strip()
+    if not uname:
+        return 0.0
+    if uname in ip_totals:
+        return float(ip_totals.get(uname, 0.0) or 0.0)
+    uname_l = uname.lower()
+    if uname_l in ip_totals:
+        return float(ip_totals.get(uname_l, 0.0) or 0.0)
+    return 0.0
 
 def sync_usage_to_subpanel(username, uinfo):
     # Best-effort usage sync for external panel.
@@ -166,6 +186,7 @@ def get_user_monitor_ips(uinfo, groups):
     ips = []
     group_id = uinfo.get('group')
     target_node = uinfo.get('node')
+    proto = uinfo.get('protocol', 'out')
 
     g_nodes = {}
     if group_id:
@@ -193,6 +214,15 @@ def get_user_monitor_ips(uinfo, groups):
         nip = get_target_ip(target_node)
         if nip:
             ips.append(str(nip).strip())
+
+    # Pre-provision safety:
+    # For SS users, include all known nodes to avoid stale group/node mapping
+    # causing fresh traffic on switched/repaired nodes to be missed.
+    if proto != 'v2':
+        for nid in get_all_servers().keys():
+            nip = get_target_ip(nid)
+            if nip:
+                ips.append(str(nip).strip())
     # Keep unique order
     seen = set()
     out = []
@@ -206,11 +236,15 @@ def monitor_traffic():
     while True:
         try:
             config = load_config()
-            interval = config.get('interval', 12)
-        except:
-            interval = 12
-
-        time.sleep(interval)
+            interval_raw = config.get('interval', 12)
+            interval = float(interval_raw)
+        except Exception:
+            interval = 12.0
+        interval = max(1.0, interval)
+        try:
+            time.sleep(interval)
+        except Exception:
+            time.sleep(12)
         try:
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
@@ -265,7 +299,7 @@ def monitor_traffic():
                 current_total = 0.0
 
                 for ip in user_ips_map[uname]:
-                    current_val = float(ip_totals_map.get(ip, {}).get(uname, 0.0))
+                    current_val = lookup_user_total(ip_totals_map.get(ip, {}), uname)
                     last_val = float(last_map.get(ip, 0.0) or 0.0)
 
                     diff = 0.0
@@ -336,7 +370,7 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
                     
         except Exception as e:
-            pass
+            print(f"[monitor_traffic] loop error: {e}")
 
 def start_background_monitor():
     t = threading.Thread(target=monitor_traffic, daemon=True)
