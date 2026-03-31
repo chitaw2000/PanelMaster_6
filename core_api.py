@@ -586,34 +586,3 @@ def api_internal_delete_user():
         fire_ssh_bg(nip, cmd_full_del)
 
     return jsonify({"success": True, "message": "User deleted"})
-
-
-@api_bp.route('/api/internal/metrics/transfer', methods=['GET', 'OPTIONS'])
-def api_internal_metrics_transfer():
-    if request.method == 'OPTIONS':
-        return jsonify({"success": True}), 200
-    auth_err = _require_api_key()
-    if auth_err:
-        return auth_err
-
-    bytes_map = {}
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            try:
-                with open(USERS_DB, 'r') as f:
-                    db = json.load(f)
-            except Exception:
-                db = {}
-        else:
-            db = {}
-
-    for username, uinfo in db.items():
-        if not isinstance(uinfo, dict):
-            continue
-        try:
-            used_bytes = int(float(uinfo.get('used_bytes', 0) or 0))
-        except Exception:
-            used_bytes = 0
-        bytes_map[str(username)] = max(0, used_bytes)
-
-    return jsonify({"bytesTransferredByUserId": bytes_map})
