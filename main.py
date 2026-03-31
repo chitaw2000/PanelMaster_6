@@ -1237,23 +1237,42 @@ def delete_node(node_id):
                     f.write(line)
                     
     groups = load_auto_groups()
-    is_auto = False
+    removed_from_group = False
     for gid, gdata in groups.items():
         if node_id in gdata.get("nodes", {}):
             del groups[gid]["nodes"][node_id]
-            save_auto_groups(groups)
-            is_auto = True
-            break
+            removed_from_group = True
+    if removed_from_group:
+        save_auto_groups(groups)
             
     config = load_config()
     if node_id in config.get('disabled_nodes', []): 
         config['disabled_nodes'].remove(node_id)
         save_config(config)
+
+    # Strong cleanup: remove stale user records bound to deleted node.
+    users_removed = 0
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f:
+                    db = json.load(f)
+            except Exception:
+                db = {}
+            users_to_delete = [
+                uname for uname, info in db.items()
+                if isinstance(info, dict) and str(info.get('node', '')).strip().lower() == str(node_id).strip().lower()
+            ]
+            for uname in users_to_delete:
+                del db[uname]
+                users_removed += 1
+            with open(USERS_DB, 'w') as f:
+                json.dump(db, f, indent=4)
         
-    if is_auto: 
-        log_activity("Delete Node", f"node={node_id} scope=auto-group", "warning")
+    if removed_from_group: 
+        log_activity("Delete Node", f"node={node_id} scope=auto-group users_removed={users_removed}", "warning")
         return redirect(request.referrer)
-    log_activity("Delete Node", f"node={node_id} scope=custom", "warning")
+    log_activity("Delete Node", f"node={node_id} scope=custom users_removed={users_removed}", "warning")
     return redirect(url_for('dashboard'))
 
 @app.route('/replace_id/<current_id>', methods=['POST'])
@@ -1922,6 +1941,29 @@ def restore_node_backup(backup_ref):
 
 @app.route('/purge_node/<node_id>', methods=['POST'])
 def purge_node(node_id):
+    # Ensure node references are fully removed from groups/config as well.
+    groups = load_auto_groups()
+    changed = False
+    for gid, gdata in groups.items():
+        if node_id in gdata.get("nodes", {}):
+            del groups[gid]["nodes"][node_id]
+            changed = True
+    if changed:
+        save_auto_groups(groups)
+
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            lines = f.readlines()
+        with open(NODES_LIST, 'w') as f:
+            for line in lines:
+                if line.strip() and not line.startswith(f"{node_id}|") and not line.startswith(f"{node_id} "):
+                    f.write(line)
+
+    cfg = load_config()
+    if node_id in cfg.get('disabled_nodes', []):
+        cfg['disabled_nodes'].remove(node_id)
+        save_config(cfg)
+
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: 

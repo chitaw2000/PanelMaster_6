@@ -12,6 +12,31 @@ except ImportError:
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
     MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
+_IP_FAIL_CACHE = {}
+_IP_FAIL_LOCK = threading.Lock()
+
+
+def _skip_ip_temporarily(ip):
+    now = time.time()
+    with _IP_FAIL_LOCK:
+        rec = _IP_FAIL_CACHE.get(ip, {"fails": 0, "retry_at": 0.0})
+        if rec.get("retry_at", 0.0) > now:
+            return True
+    return False
+
+
+def _mark_ip_result(ip, ok):
+    now = time.time()
+    with _IP_FAIL_LOCK:
+        if ok:
+            _IP_FAIL_CACHE.pop(ip, None)
+            return
+        rec = _IP_FAIL_CACHE.get(ip, {"fails": 0, "retry_at": 0.0})
+        fails = int(rec.get("fails", 0)) + 1
+        # Exponential backoff up to 10 minutes for dead/inactive nodes.
+        backoff = min(600, 10 * (2 ** min(fails, 6)))
+        _IP_FAIL_CACHE[ip] = {"fails": fails, "retry_at": now + backoff}
+
 def get_target_ip(node_id):
     node_key = str(node_id or "").strip()
     if not node_key:
@@ -104,10 +129,15 @@ def suspend_user_everywhere(username, uinfo):
 
 def query_ip_user_totals(ip):
     totals = {}
+    if not ip:
+        return totals
+    if _skip_ip_temporarily(ip):
+        return totals
     try:
         cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
-        if not res.stdout:
+        if res.returncode != 0 or not res.stdout:
+            _mark_ip_result(ip, False)
             return totals
 
         stats = json.loads(res.stdout).get("stat", [])
@@ -120,8 +150,9 @@ def query_ip_user_totals(ip):
             elif len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
                 uname = str(p[1])[4:]
                 totals[uname] = totals.get(uname, 0.0) + val
+        _mark_ip_result(ip, True)
     except Exception:
-        pass
+        _mark_ip_result(ip, False)
     return totals
 
 def sync_usage_to_subpanel(username, uinfo):
