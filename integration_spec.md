@@ -1,16 +1,13 @@
-# PanelMaster External Integration Spec
+# PanelMaster Integration Spec (Master <-> External Panel)
 
-This document is for the external panel developer integrating with Master Panel.
+This document is for the external panel developer.
 
-## Base URL and Auth
+## 1) Auth and Common Headers
 
-- Base URL: `https://dash.datthabaluu.me`
 - Required header on protected endpoints:
   - `Content-Type: application/json`
   - `x-api-key: <PANELMASTER_API_KEY>`
-- Do not hardcode API key in source code. Use environment variable.
-
-Example:
+- Store API key in environment variable (never hardcode).
 
 ```js
 const headers = {
@@ -19,33 +16,84 @@ const headers = {
 };
 ```
 
-## Endpoint Compatibility
+---
 
-Current payload formats are backward-compatible. Existing integration can continue with the same payload structures.
+## 2) Master -> External GB Sync (IMPORTANT)
 
-### 1) Get active groups
+Master pushes user usage to external panel (webhook style).
 
-- Method: `GET`
-- Path: `/api/active-groups`
-- Auth: required
-- Response:
+### URL order used by Master
+
+1. `POST /api/internal/sync-user-usage`
+2. fallback `POST /admin/api/internal/sync-user-usage`
+
+Keep at least route (1). Best: support both.
+
+### Payload sent by Master
 
 ```json
 {
-  "success": true,
-  "groups": [
-    { "id": "g1", "name": "Group One", "serverCount": 2 }
-  ]
+  "name": "username",
+  "usedGB": 12.3456,
+  "totalGB": 50,
+  "remainingGB": 37.6544,
+  "expireDate": "2026-04-30",
+  "isBlocked": false
 }
 ```
 
-### 2) Generate keys
+### Send trigger in Master
 
-- Method: `POST`
-- Path: `/api/generate-keys`
-- Auth: required
-- Request:
+Master sends when user has new traffic and at least one condition is true:
+- 30 seconds passed since last sync, or
+- new usage since last sync >= 50 MB.
 
+### Expected external behavior
+
+- Verify `x-api-key`.
+- Validate payload (`name` required).
+- Upsert/update external user by username (`name`).
+- Save: `usedGB`, `totalGB`, `remainingGB`, `expireDate`, `isBlocked`.
+- Return fast `200` (or `204`).
+
+### Node.js receiver example (Express)
+
+```js
+app.post(
+  ["/api/internal/sync-user-usage", "/admin/api/internal/sync-user-usage"],
+  async (req, res) => {
+    const apiKey = req.header("x-api-key");
+    if (apiKey !== process.env.PANELMASTER_API_KEY) {
+      return res.status(401).json({ ok: false, error: "invalid_api_key" });
+    }
+
+    const { name, usedGB, totalGB, remainingGB, expireDate, isBlocked } = req.body || {};
+    if (!name) return res.status(400).json({ ok: false, error: "name_required" });
+
+    await updateUserUsageFromMaster({
+      username: String(name),
+      usedGB: Number(usedGB || 0),
+      totalGB: Number(totalGB || 0),
+      remainingGB: Number(remainingGB || 0),
+      expireDate: expireDate || null,
+      isBlocked: Boolean(isBlocked)
+    });
+
+    return res.status(200).json({ ok: true });
+  }
+);
+```
+
+---
+
+## 3) External -> Master API Endpoints
+
+### A) Get active groups
+- `GET /api/active-groups`
+
+### B) Generate keys
+- `POST /api/generate-keys`
+- request:
 ```json
 {
   "masterGroupId": "group_id",
@@ -55,31 +103,8 @@ Current payload formats are backward-compatible. Existing integration can contin
 }
 ```
 
-- Response includes `keys` and `token`:
-
-```json
-{
-  "success": true,
-  "keys": {
-    "node1": {
-      "server": "1.2.3.4",
-      "server_port": 10001,
-      "password": "uuid",
-      "method": "chacha20-ietf-poly1305",
-      "prefix": "..."
-    }
-  },
-  "token": "user_token"
-}
-```
-
-### 3) Switch active server
-
-- Method: `POST`
-- Path: `/api/webhook/switch`
-- Auth: required
-- Request:
-
+### C) Switch active server
+- `POST /api/webhook/switch`
 ```json
 {
   "token": "user_token",
@@ -87,32 +112,21 @@ Current payload formats are backward-compatible. Existing integration can contin
 }
 ```
 
-### 4) User action
-
-- Method: `POST`
-- Path: `/api/user-action`
-- Auth: required
-- Request:
-
+### D) User action (suspend/resume/delete)
+- `POST /api/user-action`
 ```json
 {
   "token": "user_token",
   "action": "suspend"
 }
 ```
+- action aliases:
+  - suspend: `suspend`, `block`, `blocked`, `pause`
+  - resume: `resume`, `unblock`, `unblocked`, `unpause`
+  - delete: `delete`
 
-- Supported actions:
-  - Suspend aliases: `suspend`, `block`, `blocked`, `pause`
-  - Resume aliases: `resume`, `unblock`, `unblocked`, `unpause`
-  - Delete: `delete`
-
-### 5) Internal edit user
-
-- Method: `POST`
-- Path: `/api/internal/edit-user`
-- Auth: required
-- Request:
-
+### E) Internal edit user
+- `POST /api/internal/edit-user`
 ```json
 {
   "username": "user1",
@@ -122,71 +136,51 @@ Current payload formats are backward-compatible. Existing integration can contin
 }
 ```
 
-### 6) Internal block user
-
-- Method: `POST`
-- Path: `/api/internal/block-user`
-- Auth: required
-- Request:
-
+### F) Internal block user
+- `POST /api/internal/block-user`
 ```json
 {
   "username": "user1"
 }
 ```
 
-### 7) Internal delete user
-
-- Method: `POST`
-- Path: `/api/internal/delete-user`
-- Auth: required
-- Request by username:
-
+### G) Internal delete user
+- `POST /api/internal/delete-user`
 ```json
 {
   "username": "user1"
 }
 ```
-
-- Or request by token:
-
+or
 ```json
 {
   "token": "user_token"
 }
 ```
 
-## Expected HTTP Status Handling
+---
 
-Client should handle:
+## 4) Status Codes and Retry Policy
 
-- `200`: success
-- `400`: invalid payload
-- `401`: unauthorized (invalid/revoked API key)
-- `404`: user or group not found
-- `500`: server-side error
+- `200`/`204`: success
+- `400`: bad payload (do not blind-retry)
+- `401`: invalid/revoked key (stop retries, rotate key)
+- `404`: user/group not found (investigate mapping)
+- `500`: temporary server error (retry with backoff)
 
-On `401`, stop retries and alert operator to rotate/fix key.
+---
 
-## Master-to-External Usage Sync
+## 5) API Key Rotation Checklist
 
-Master panel sends usage sync to external panel via:
+1. Update external env: `PANELMASTER_API_KEY`
+2. Restart external service
+3. Test protected endpoint (`/api/active-groups`)
+4. Confirm usage webhook receives `200`
 
-- `/api/internal/sync-user-usage`
-- fallback: `/admin/api/internal/sync-user-usage`
+---
 
-External panel should keep either first route or both routes available.
+## 6) Reverse Proxy / WAF Note
 
-## API Key Rotation and Revoke Notes
-
-Master now supports per-client API keys and revocation.
-
-When key is changed/revoked:
-
-1. Update external panel env value for `PANELMASTER_API_KEY`
-2. Restart external panel process
-3. Verify with a protected test call (`/api/active-groups`)
-
-## Cloudflare/WAF Note
-
-If Cloudflare WAF is enabled, make sure API routes (`/api/*`) with custom header `x-api-key` are not blocked or challenged.
+If using Cloudflare/WAF, allow API routes and custom header `x-api-key` for:
+- `/api/*`
+- `/admin/api/*`
