@@ -22,6 +22,8 @@ def load_config():
         "api_key_clients": [],
         "disabled_nodes": [],
         "monitor_skip_nodes": [],
+        "external_sync_url": "https://dash1.dabazinme.me/api/internal/sync-user-usage",
+        "external_sync_api_key": "",
         "backup_bot_enabled": False,
         "backup_bot_token": "",
         "backup_bot_admin_id": "",

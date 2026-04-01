@@ -366,6 +366,72 @@
             <div id="inactiveNodeSummary" class="mt-3 text-[11px] font-black text-slate-500">Press refresh to check node health.</div>
             <div id="inactiveNodeList" class="mt-3 space-y-2 max-h-48 overflow-y-auto pr-1"></div>
         </div>
+        <div class="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 mb-6">
+            <h3 class="text-sm font-black text-indigo-700 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-link"></i> External Panel Sync
+            </h3>
+            <form action="/save_external_sync_settings" method="POST" class="space-y-4">
+                <div>
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Sync URL</label>
+                    <input type="text" name="external_sync_url" value="{{ config.external_sync_url or 'https://dash1.dabazinme.me/api/internal/sync-user-usage' }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">x-api-key</label>
+                    <input type="text" name="external_sync_api_key" value="{{ config.external_sync_api_key or '' }}" placeholder="pmk_xxx..." class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300">
+                </div>
+                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md shadow-indigo-200 transition">
+                    Save External Sync Settings
+                </button>
+            </form>
+        </div>
+        <div class="bg-violet-50 p-6 rounded-2xl border border-violet-100 mb-6">
+            <h3 class="text-sm font-black text-violet-700 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-shield-halved"></i> Login & OTP Security
+            </h3>
+            <form action="/save_auth_security_settings" method="POST" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Login Username</label>
+                        <input type="text" name="auth_username" value="{{ config.auth_username or 'admin' }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-violet-100 focus:border-violet-300">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Current Password (required for username/password change)</label>
+                        <input type="password" name="current_password" placeholder="Enter current password" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-violet-100 focus:border-violet-300">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">New Password</label>
+                        <input type="password" name="new_password" placeholder="Leave blank to keep current password" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-violet-100 focus:border-violet-300">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Confirm New Password</label>
+                        <input type="password" name="confirm_password" placeholder="Repeat new password" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-violet-100 focus:border-violet-300">
+                    </div>
+                </div>
+                <label class="flex items-center justify-between bg-white border border-violet-100 rounded-xl px-3 py-2">
+                    <span class="text-xs font-black text-slate-600">Enable Telegram OTP (2FA)</span>
+                    <input type="checkbox" name="auth_2fa_enabled" {% if config.auth_2fa_enabled %}checked{% endif %} class="w-4 h-4 accent-violet-600">
+                </label>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div class="md:col-span-2">
+                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">OTP Bot Token</label>
+                        <input type="text" name="auth_telegram_bot_token" value="{{ config.auth_telegram_bot_token or '' }}" placeholder="123456:ABC..." class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-violet-100 focus:border-violet-300">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">OTP Admin Chat ID</label>
+                        <input type="text" name="auth_telegram_admin_id" value="{{ config.auth_telegram_admin_id or '' }}" placeholder="123456789" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-violet-100 focus:border-violet-300">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">OTP TTL (seconds)</label>
+                    <input type="number" step="1" min="60" max="1800" name="auth_otp_ttl_seconds" value="{{ config.auth_otp_ttl_seconds or 300 }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-violet-100 focus:border-violet-300">
+                </div>
+                <button type="submit" class="w-full bg-violet-600 hover:bg-violet-700 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md shadow-violet-200 transition">
+                    Save Login & OTP Security
+                </button>
+            </form>
+        </div>
         <form action="/save_settings_basic" method="POST" class="bg-slate-50 p-6 rounded-2xl border border-slate-200 mb-6"><h3 class="text-sm font-black text-slate-700 uppercase tracking-widest mb-4">Core Config</h3><div class="space-y-4 mb-4"><div><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Bot Token</label><input type="text" name="bot_token" value="{{ config.bot_token }}" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"></div><div><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Sync Interval (Hours)</label><input type="number" name="interval" value="{{ config.interval }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"></div></div><button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md shadow-indigo-200 transition">Save Core Config</button></form>
 
         <div class="bg-emerald-50 p-6 rounded-2xl border border-emerald-100 mb-6">

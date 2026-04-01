@@ -48,19 +48,32 @@ def _parse_monitor_interval(raw_interval):
 
 
 def _get_sync_targets():
-    # External panel currently exposes only this route.
-    primary = str(
-        os.environ.get(
-            "PANEL_SYNC_PRIMARY_URL",
-            "https://dash1.dabazinme.me/api/internal/sync-user-usage"
-        )
-    ).strip()
+    cfg = {}
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        cfg = {}
+    primary = str(cfg.get("external_sync_url", "")).strip()
+    if not primary:
+        primary = str(
+            os.environ.get(
+                "PANEL_SYNC_PRIMARY_URL",
+                "https://dash1.dabazinme.me/api/internal/sync-user-usage"
+            )
+        ).strip()
     return [primary] if primary else []
 
 
 def _get_sync_api_key():
-    # Use dedicated sync key first; fallback to exact known value.
-    # This prevents old/wrong env keys from causing 401.
+    # Prefer panel config value so operator can rotate from dashboard.
+    cfg = {}
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        cfg = {}
+    key = str(cfg.get("external_sync_api_key", "")).strip()
+    if key:
+        return key
     return str(
         os.environ.get(
             "PANEL_SYNC_API_KEY",

@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, session, url_for, s
 import json, os, re, secrets, subprocess, urllib.parse, base64, threading, time, requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from werkzeug.security import generate_password_hash
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, MASTER_API_KEY, load_config, save_config
 from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB
@@ -2223,6 +2224,71 @@ def save_backup_bot_settings():
         cfg['backup_bot_last_sent_ts'] = 0
     save_config(cfg)
     log_activity("Save Backup Bot Settings", f"enabled={cfg['backup_bot_enabled']} interval={cfg['backup_bot_interval_minutes']}m", "info")
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/save_external_sync_settings', methods=['POST'])
+def save_external_sync_settings():
+    cfg = load_config()
+    url = str(request.form.get('external_sync_url', '')).strip()
+    api_key = str(request.form.get('external_sync_api_key', '')).strip()
+
+    if not url:
+        url = "https://dash1.dabazinme.me/api/internal/sync-user-usage"
+    cfg['external_sync_url'] = url
+    if api_key:
+        cfg['external_sync_api_key'] = api_key
+
+    save_config(cfg)
+    key_state = "set" if str(cfg.get('external_sync_api_key', '')).strip() else "empty"
+    log_activity("Save External Sync Settings", f"url={url} api_key={key_state}", "info")
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/save_auth_security_settings', methods=['POST'])
+def save_auth_security_settings():
+    cfg = load_config()
+    cfg, changed = ensure_auth_config(cfg, legacy_password=ADMIN_PASS)
+    if changed:
+        save_config(cfg)
+
+    current_password = str(request.form.get('current_password', '')).strip()
+    new_username = str(request.form.get('auth_username', '')).strip()
+    new_password = str(request.form.get('new_password', '')).strip()
+    confirm_password = str(request.form.get('confirm_password', '')).strip()
+    current_user = str(cfg.get('auth_username', 'admin')).strip() or 'admin'
+
+    wants_login_change = bool(new_username) or bool(new_password) or bool(confirm_password)
+    if wants_login_change:
+        if not current_password or not verify_login_credentials(cfg, current_user, current_password):
+            log_activity("Auth Settings Update Failed", "current password mismatch", "warning")
+            return redirect(url_for('dashboard'))
+        if new_password or confirm_password:
+            if new_password != confirm_password:
+                log_activity("Auth Settings Update Failed", "new password confirm mismatch", "warning")
+                return redirect(url_for('dashboard'))
+            if len(new_password) < 6:
+                log_activity("Auth Settings Update Failed", "new password too short", "warning")
+                return redirect(url_for('dashboard'))
+            cfg['auth_password_hash'] = generate_password_hash(new_password)
+        if new_username:
+            cfg['auth_username'] = new_username
+
+    cfg['auth_2fa_enabled'] = request.form.get('auth_2fa_enabled') == 'on'
+    cfg['auth_telegram_bot_token'] = str(request.form.get('auth_telegram_bot_token', '')).strip()
+    cfg['auth_telegram_admin_id'] = str(request.form.get('auth_telegram_admin_id', '')).strip()
+    try:
+        ttl = int(request.form.get('auth_otp_ttl_seconds', cfg.get('auth_otp_ttl_seconds', 300)) or 300)
+    except Exception:
+        ttl = int(cfg.get('auth_otp_ttl_seconds', 300) or 300)
+    cfg['auth_otp_ttl_seconds'] = max(60, min(1800, ttl))
+
+    save_config(cfg)
+    log_activity(
+        "Save Auth Security Settings",
+        f"user={cfg.get('auth_username','admin')} 2fa={cfg.get('auth_2fa_enabled', True)}",
+        "info"
+    )
     return redirect(url_for('dashboard'))
 
 @app.route('/send_backup_now', methods=['POST'])
