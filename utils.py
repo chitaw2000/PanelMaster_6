@@ -36,7 +36,10 @@ def get_all_servers():
                 for gid, gdata in groups.items():
                     for nid, ndata in gdata.get("nodes", {}).items():
                         nip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
-                        servers[nid.strip()] = {"name": f"[AUTO] {nid}", "ip": nip}
+                        nname = ""
+                        if isinstance(ndata, dict):
+                            nname = str(ndata.get("name", "")).strip()
+                        servers[nid.strip()] = {"name": nname or f"[AUTO] {nid}", "ip": nip}
         except: pass
     return servers
 

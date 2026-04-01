@@ -808,9 +808,11 @@ def group_view(group_id):
         if isinstance(ndata, dict):
             nip = str(ndata.get("ip")).strip()
             limit = int(ndata.get("limit", group.get("limit", 30)))
+            nname = str(ndata.get("name", "")).strip() or nid
         else:
             nip = str(ndata).strip()
             limit = int(group.get("limit", 30))
+            nname = nid
             
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
@@ -819,13 +821,29 @@ def group_view(group_id):
         is_alarm = limit_tb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
         
-        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm, "health": health})
+        server_stats.append({
+            "id": nid,
+            "name": nname,
+            "ip": nip,
+            "count": counts[nid],
+            "limit": limit,
+            "used_gb": used_gb,
+            "limit_tb": limit_tb,
+            "is_alarm": is_alarm,
+            "health": health
+        })
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats, group_used_gb=group_used_gb)
 
 def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames=None):
     time.sleep(2)
     try:
+        groups = load_auto_groups()
+        nmeta = (groups.get(group_id, {}) or {}).get("nodes", {}).get(new_node_id, {})
+        display_name = str(nmeta.get("name", "")).strip() if isinstance(nmeta, dict) else ""
+        if not display_name:
+            display_name = str(new_node_id)
+
         with db_lock:
             if not os.path.exists(USERS_DB): return
             with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -859,7 +877,11 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
 
         payload = {
             "masterGroupId": group_id,
+            # Keep original ID-based contract for compatibility.
             "newServerName": new_node_id,
+            # Extra display fields for external panel UI.
+            "newServerDisplayName": display_name,
+            "newServerId": new_node_id,
             "userKeys": user_keys
         }
         
@@ -951,6 +973,7 @@ def deploy_and_sync_group_node(group_id, node_id, node_ip, only_usernames=None):
 @app.route('/add_server_to_group/<group_id>', methods=['POST'])
 def add_server_to_group(group_id):
     nid = request.form.get('node_id', '').strip().replace(" ", "_")
+    nname = request.form.get('node_name', '').strip()
     nip = request.form.get('node_ip', '').strip()
     limit = int(request.form.get('limit', 30))
     groups = load_auto_groups()
@@ -960,10 +983,14 @@ def add_server_to_group(group_id):
         return f"<script>alert('Error: Server ID [{nid}] already exists!'); window.history.back();</script>"
         
     if group_id in groups and nid and nip:
-        groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
+        groups[group_id]["nodes"][nid] = {
+            "ip": nip,
+            "limit": limit,
+            "name": nname or nid
+        }
         save_auto_groups(groups)
         threading.Thread(target=deploy_and_sync_group_node, args=(group_id, nid, nip), daemon=True).start()
-        log_activity("Add Server To Group", f"group={group_id} node={nid} ip={nip}", "success")
+        log_activity("Add Server To Group", f"group={group_id} node={nid} name={nname or nid} ip={nip}", "success")
         
     return redirect(f'/group/{group_id}?newly_added={nid}')
 
@@ -1028,6 +1055,26 @@ def edit_server_limit(group_id, node_id):
     if not success: 
         return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
     log_activity("Edit Server Limit", f"group={group_id} node={node_id} limit={new_limit}", "info")
+    return redirect(f'/group/{group_id}')
+
+
+@app.route('/edit_server_name/<group_id>/<node_id>', methods=['POST'])
+def edit_server_name(group_id, node_id):
+    new_name = str(request.form.get('node_name', '')).strip()
+    if not new_name:
+        return redirect(f'/group/{group_id}')
+    groups = load_auto_groups()
+    if group_id not in groups or node_id not in groups[group_id].get("nodes", {}):
+        return redirect(f'/group/{group_id}')
+
+    ndata = groups[group_id]["nodes"][node_id]
+    if isinstance(ndata, dict):
+        ndata["name"] = new_name
+    else:
+        ndata = {"ip": str(ndata).strip(), "limit": int(groups[group_id].get("limit", 30)), "name": new_name}
+    groups[group_id]["nodes"][node_id] = ndata
+    save_auto_groups(groups)
+    log_activity("Edit Server Name", f"group={group_id} node={node_id} name={new_name}", "info")
     return redirect(f'/group/{group_id}')
 
 @app.route('/add_user_auto', methods=['POST'])

@@ -107,7 +107,11 @@
                 </button>
                 
                 <div class="flex items-center gap-3 mb-4">
-                    <span class="text-sm font-black text-slate-800 uppercase tracking-tight">{{ s.id }}</span>
+                    <span class="text-sm font-black text-slate-800 tracking-tight">{{ s.name or s.id }}</span>
+                    <span class="text-[10px] font-mono font-bold text-slate-400">({{ s.id }})</span>
+                    <button type="button" onclick='openEditServerName({{ s.id|tojson }}, {{ (s.name or s.id)|tojson }})' class="text-sky-400 hover:text-sky-600 bg-sky-50 w-7 h-7 rounded-lg flex items-center justify-center transition-colors" title="Edit Server Name">
+                        <i class="fa-solid fa-signature text-[10px]"></i>
+                    </button>
                     <button type="button" onclick="openEditLimit('{{ s.id }}', '{{ s.limit }}')" class="text-purple-400 hover:text-purple-600 bg-purple-50 w-7 h-7 rounded-lg flex items-center justify-center transition-colors" title="Edit Custom Key Limit">
                         <i class="fa-solid fa-pen text-[10px]"></i>
                     </button>
@@ -232,7 +236,7 @@
                                 <form action="/switch_user_node/{{ u.username }}" method="POST" class="m-0 flex items-center gap-1">
                                     <select name="target_node" class="bg-white border border-slate-200 text-[10px] font-bold py-1 px-2 rounded focus:outline-none text-slate-600 w-20" required>
                                         {% for s in server_stats %}
-                                            <option value="{{ s.id }}" {% if u.node == s.id %}selected{% endif %}>{{ s.id }}</option>
+                                            <option value="{{ s.id }}" {% if u.node == s.id %}selected{% endif %}>{{ s.name or s.id }} ({{ s.id }})</option>
                                         {% endfor %}
                                     </select>
                                     <button type="submit" class="bg-amber-100 text-amber-600 hover:bg-amber-500 hover:text-white px-2 py-1 rounded transition-colors text-[10px] font-black uppercase" title="Switch Server">
@@ -335,6 +339,7 @@
         <form action="/add_server_to_group/{{ group_id }}" method="POST">
             <div class="space-y-4 mb-8">
                 <input type="text" name="node_id" placeholder="Node ID (e.g. auto_01)" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm focus:outline-none focus:ring-2 focus:ring-purple-100 transition" required>
+                <input type="text" name="node_name" placeholder="Node Name (e.g. SG Premium 01)" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-100 transition" required>
                 <input type="text" name="node_ip" placeholder="Server IP Address" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm focus:outline-none focus:ring-2 focus:ring-purple-100 transition" required>
                 <div class="relative">
                     <input type="number" name="limit" value="{{ group.limit }}" class="w-full bg-purple-50/50 border border-purple-100 p-3.5 rounded-xl font-mono text-sm font-black text-purple-600 pr-24 focus:outline-none focus:ring-2 focus:ring-purple-100 transition" required>
@@ -378,6 +383,22 @@
             <div class="flex justify-end gap-3">
                 <button type="button" onclick="document.getElementById('editLimitModal').classList.add('hidden')" class="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button>
                 <button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-purple-200 transition">Update</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="editServerNameModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800">Edit Server Name</h2>
+        <p class="text-xs text-slate-500 mb-6 font-bold leading-relaxed" id="editServerNameDesc"></p>
+        <form id="editServerNameForm" method="POST">
+            <div class="mb-8">
+                <input type="text" name="node_name" id="editServerNameInput" class="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl text-sm font-bold text-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-100 transition" required>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('editServerNameModal').classList.add('hidden')" class="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button>
+                <button type="submit" class="bg-sky-600 hover:bg-sky-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-sky-200 transition">Update Name</button>
             </div>
         </form>
     </div>
@@ -698,6 +719,13 @@ function openEditLimit(nid, cl) {
     document.getElementById('editLimitInput').value = cl;
     document.getElementById('editLimitForm').action = "/edit_server_limit/{{ group_id }}/" + nid;
     document.getElementById('editLimitModal').classList.remove('hidden');
+}
+
+function openEditServerName(nid, currentName) {
+    document.getElementById('editServerNameDesc').innerHTML = `Node ID: <span class="text-sky-600 font-black uppercase tracking-wider">${nid}</span>`;
+    document.getElementById('editServerNameInput').value = currentName || nid;
+    document.getElementById('editServerNameForm').action = "/edit_server_name/{{ group_id }}/" + nid;
+    document.getElementById('editServerNameModal').classList.remove('hidden');
 }
 
 function openHealthModal(nid, ch) {
