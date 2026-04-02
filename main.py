@@ -1017,6 +1017,32 @@ def resync_server_to_subpanel(group_id, node_id):
     log_activity("Manual Resync", f"group={group_id} node={node_id}", "info")
     return redirect(request.referrer or f'/group/{group_id}')
 
+@app.route('/resync_group_to_subpanel/<group_id>', methods=['POST'])
+def resync_group_to_subpanel(group_id):
+    groups = load_auto_groups()
+    gdata = groups.get(group_id, {})
+    gnodes = gdata.get("nodes", {}) if isinstance(gdata, dict) else {}
+    if not gnodes:
+        return redirect(request.referrer or url_for('dashboard'))
+
+    queued = 0
+    for node_id, ndata in gnodes.items():
+        node_ip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
+        if not node_ip:
+            node_ip = get_target_ip(node_id) or ""
+        node_ip = str(node_ip).strip()
+        if not node_ip:
+            continue
+        threading.Thread(
+            target=deploy_and_sync_group_node,
+            args=(group_id, node_id, node_ip),
+            daemon=True
+        ).start()
+        queued += 1
+
+    log_activity("Manual Group Resync", f"group={group_id} nodes_queued={queued}", "info")
+    return redirect(request.referrer or f'/group/{group_id}')
+
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
 def delete_server_from_group(group_id, node_id):
     groups = load_auto_groups()
