@@ -1082,8 +1082,12 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
         sync_key = str(cfg.get("external_sync_api_key", "")).strip()
         if not sync_key:
             sync_key = str(os.environ.get("PANEL_SYNC_API_KEY", "pmk_XI1fBk3DEEekIDwgngJWQmjFXR0TziWkzw9UvmNB_Uk")).strip()
-        primary_url = str(cfg.get("external_new_server_sync_url", "")).strip()
-        if not primary_url:
+        # Derive sync-new-server URL from the same base as GB sync URL in settings.
+        gb_sync_url = str(cfg.get("external_sync_url", "")).strip()
+        if gb_sync_url:
+            base = gb_sync_url.rsplit("/", 1)[0]
+            primary_url = f"{base}/sync-new-server"
+        else:
             primary_url = str(
                 os.environ.get(
                     "PANEL_SYNC_NEW_SERVER_URL",
