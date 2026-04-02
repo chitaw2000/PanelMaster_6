@@ -1128,6 +1128,31 @@ def deploy_and_sync_group_node(group_id, node_id, node_ip, only_usernames=None):
     time.sleep(1)
     sync_new_node_to_subpanel(group_id, node_id, node_ip, only_usernames=only_usernames)
 
+
+def _bootstrap_group_node_after_add(group_id, node_id, node_ip):
+    """
+    Auto-bootstrap a newly added group node so it works without manual reinstall.
+    """
+    ip = str(node_ip or "").strip()
+    if not ip:
+        log_activity("Group Node Bootstrap Failed", f"group={group_id} node={node_id} reason=missing_ip", "error")
+        return
+    try:
+        if not _is_node_runtime_ready(ip):
+            log_activity("Group Node Bootstrap", f"group={group_id} node={node_id} step=auto_install", "info")
+            ok, err = _run_node_install_script(node_id, ip)
+            if not ok:
+                log_activity(
+                    "Group Node Bootstrap Failed",
+                    f"group={group_id} node={node_id} reason=install_failed err={str(err)[:120]}",
+                    "error"
+                )
+                return
+        deploy_and_sync_group_node(group_id, node_id, ip)
+        log_activity("Group Node Bootstrap Success", f"group={group_id} node={node_id}", "success")
+    except Exception as e:
+        log_activity("Group Node Bootstrap Error", f"group={group_id} node={node_id} error={str(e)[:120]}", "error")
+
 @app.route('/add_server_to_group/<group_id>', methods=['POST'])
 def add_server_to_group(group_id):
     nid = request.form.get('node_id', '').strip().replace(" ", "_")
@@ -1147,7 +1172,7 @@ def add_server_to_group(group_id):
             "name": nname or nid
         }
         save_auto_groups(groups)
-        threading.Thread(target=deploy_and_sync_group_node, args=(group_id, nid, nip), daemon=True).start()
+        threading.Thread(target=_bootstrap_group_node_after_add, args=(group_id, nid, nip), daemon=True).start()
         log_activity("Add Server To Group", f"group={group_id} node={nid} name={nname or nid} ip={nip}", "success")
         
     return redirect(f'/group/{group_id}?newly_added={nid}')
