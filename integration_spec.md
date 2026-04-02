@@ -101,6 +101,8 @@ When Master adds/syncs a node inside an auto group, it pushes this webhook.
 {
   "masterGroupId": "Node1",
   "groupName": "Premium",
+  "version": "2026-04-02T15:45:10Z#node3",
+  "at": "2026-04-02T15:45:10Z",
   "newServerName": "Node3",
   "newServerDisplayName": "Singapore-3",
   "newServerId": "Node3",
@@ -120,6 +122,10 @@ When Master adds/syncs a node inside an auto group, it pushes this webhook.
 - Verify `x-api-key`.
 - Validate required: `masterGroupId`, `newServerId`, `userKeys`.
 - Strong mapping guard: validate by both `masterGroupId` and `groupName` if available.
+- Expose webhook metadata for UI/debug:
+  - `version`: webhook version string from master
+  - `at`: event timestamp (UTC ISO)
+  - `newServerId`: last synced server ID
 - Use `newServerId` as primary ID key (do not map by display name).
 - Use `newServerDisplayName` only for UI text.
 - Return fast `200`/`204`, process heavy writes asynchronously if needed.

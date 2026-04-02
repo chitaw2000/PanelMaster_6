@@ -1034,10 +1034,17 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
 
         if not user_keys: return 
 
+        event_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        node_suffix = str(new_node_id or "").strip().lower()
+        version = f"{event_at}#{node_suffix}"
+
         payload = {
             "masterGroupId": group_id,
             # Extra group guard for external validation/mapping.
             "groupName": group_name,
+            # Event version/timestamp for external visibility/debugging.
+            "version": version,
+            "at": event_at,
             # Keep original ID-based contract for compatibility.
             "newServerName": new_node_id,
             # Extra display fields for external panel UI.
