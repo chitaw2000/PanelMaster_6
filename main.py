@@ -705,6 +705,134 @@ def delete_auto_group(group_id):
         log_activity("Delete Auto Group", f"group={group_id}", "warning")
     return redirect(url_for('dashboard'))
 
+
+def _node_id_equals(a, b):
+    return str(a or "").strip().lower() == str(b or "").strip().lower()
+
+
+def _hard_remove_node_references(
+    node_id,
+    remove_from_nodes_list=True,
+    remove_backups=False,
+    remove_group_links=True
+):
+    """
+    Remove every known reference of a node id (case-insensitive) from:
+    - auto groups
+    - nodes_list.txt
+    - nodes_db.json
+    - users_db.json (users pinned to node)
+    - config disabled/monitor-skip arrays
+    """
+    node_norm = str(node_id or "").strip().lower()
+    removed = {"groups": 0, "users": 0, "nodes_db": 0, "config": 0}
+
+    # 1) Auto groups: remove matching node keys, regardless of exact case.
+    if remove_group_links:
+        groups = load_auto_groups()
+        groups_changed = False
+        for gid, gdata in groups.items():
+            gnodes = (gdata or {}).get("nodes", {})
+            if not isinstance(gnodes, dict):
+                continue
+            to_del = [nid for nid in gnodes.keys() if _node_id_equals(nid, node_norm)]
+            for nid in to_del:
+                del gnodes[nid]
+                removed["groups"] += 1
+                groups_changed = True
+        if groups_changed:
+            save_auto_groups(groups)
+
+    # 2) nodes_list.txt: drop line by normalized node id.
+    if remove_from_nodes_list and os.path.exists(NODES_LIST):
+        try:
+            with open(NODES_LIST, 'r') as f:
+                lines = f.readlines()
+            with open(NODES_LIST, 'w') as f:
+                for line in lines:
+                    raw = str(line or "").strip()
+                    if not raw:
+                        continue
+                    if '|' in raw:
+                        parts = raw.split('|')
+                        line_id = str(parts[0]).strip() if parts else ""
+                    else:
+                        parts = raw.rsplit(' ', 1)
+                        line_id = str(parts[0]).strip() if len(parts) == 2 else ""
+                    if _node_id_equals(line_id, node_norm):
+                        continue
+                    f.write(line)
+        except Exception:
+            pass
+
+    # 3) nodes_db.json: remove stale node stats row.
+    with db_lock:
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f:
+                    ndb = json.load(f)
+            except Exception:
+                ndb = {}
+            if isinstance(ndb, dict):
+                to_del = [nid for nid in ndb.keys() if _node_id_equals(nid, node_norm)]
+                for nid in to_del:
+                    del ndb[nid]
+                    removed["nodes_db"] += 1
+                if to_del:
+                    with open(NODES_DB, 'w') as f:
+                        json.dump(ndb, f, indent=4)
+
+        # 4) users_db.json: remove users bound to deleted node (case-insensitive).
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f:
+                    db = json.load(f)
+            except Exception:
+                db = {}
+            if isinstance(db, dict):
+                to_del = [
+                    uname for uname, info in db.items()
+                    if isinstance(info, dict) and _node_id_equals(info.get('node', ''), node_norm)
+                ]
+                for uname in to_del:
+                    del db[uname]
+                    removed["users"] += 1
+                if to_del:
+                    with open(USERS_DB, 'w') as f:
+                        json.dump(db, f, indent=4)
+
+    # 5) config.json lists: disabled_nodes + monitor_skip_nodes.
+    try:
+        cfg = load_config()
+        changed = False
+        for key in ("disabled_nodes", "monitor_skip_nodes"):
+            arr = cfg.get(key, [])
+            if not isinstance(arr, list):
+                continue
+            new_arr = [x for x in arr if not _node_id_equals(x, node_norm)]
+            if len(new_arr) != len(arr):
+                removed["config"] += (len(arr) - len(new_arr))
+                cfg[key] = new_arr
+                changed = True
+        if changed:
+            save_config(cfg)
+    except Exception:
+        pass
+
+    if remove_backups and os.path.exists(BACKUP_DIR):
+        for root, _, files in os.walk(BACKUP_DIR):
+            for f in files:
+                if (
+                    f.startswith(f"backup_{node_id}_")
+                    or f.startswith(f"node_backup__{node_id}__")
+                    or f"__{node_id}__" in f
+                ):
+                    try:
+                        os.remove(os.path.join(root, f))
+                    except Exception:
+                        pass
+    return removed
+
 @app.route('/group/<group_id>')
 def group_view(group_id):
     groups = load_auto_groups()
@@ -1046,22 +1174,47 @@ def resync_group_to_subpanel(group_id):
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
 def delete_server_from_group(group_id, node_id):
     groups = load_auto_groups()
-    node_ip = None
-    if group_id in groups and node_id in groups[group_id]["nodes"]:
-        ndata = groups[group_id]["nodes"][node_id]
-        node_ip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
-        del groups[group_id]["nodes"][node_id]
+    gnodes = (groups.get(group_id, {}) or {}).get("nodes", {})
+    match_ids = [nid for nid in gnodes.keys() if _node_id_equals(nid, node_id)]
+    node_ip = ""
+    for mid in match_ids:
+        ndata = gnodes.get(mid, {})
+        maybe_ip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
+        if maybe_ip and not node_ip:
+            node_ip = maybe_ip
+        del gnodes[mid]
+    if match_ids:
         save_auto_groups(groups)
-        
-    if node_ip:
-        with db_lock:
-            if os.path.exists(USERS_DB):
-                with open(USERS_DB, 'r') as f: 
+
+    users_to_delete = []
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f:
                     db = json.load(f)
-                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
-        if users_to_delete: 
-            bulk_delete_keys(users_to_delete)
-    log_activity("Delete Server From Group", f"group={group_id} node={node_id}", "warning")
+            except Exception:
+                db = {}
+            users_to_delete = [
+                u for u, info in db.items()
+                if isinstance(info, dict)
+                and _node_id_equals(info.get('node', ''), node_id)
+                and _node_id_equals(info.get('group', ''), group_id)
+            ]
+    if users_to_delete:
+        bulk_delete_keys(users_to_delete)
+
+    # Also clear stale node references from status/config tables.
+    removed = _hard_remove_node_references(
+        node_id,
+        remove_from_nodes_list=False,
+        remove_backups=False,
+        remove_group_links=False
+    )
+    log_activity(
+        "Delete Server From Group",
+        f"group={group_id} node={node_id} users_removed={len(users_to_delete)} group_refs_removed={removed.get('groups', 0)}",
+        "warning"
+    )
             
     return redirect(f'/group/{group_id}')
 
@@ -1297,57 +1450,22 @@ def add_node():
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
 def delete_node(node_id):
-    nodes = get_all_servers()
-    if node_id in nodes:
-        node_ip = str(nodes[node_id].get('ip')).strip()
-        if node_ip: 
-            execute_ssh_bg(node_ip, ["systemctl stop xray"])
-    
-    if os.path.exists(NODES_LIST):
-        with open(NODES_LIST, 'r') as f: 
-            lines = f.readlines()
-        with open(NODES_LIST, 'w') as f:
-            for line in lines:
-                if line.strip() and not line.startswith(f"{node_id}|") and not line.startswith(f"{node_id} "): 
-                    f.write(line)
-                    
-    groups = load_auto_groups()
-    removed_from_group = False
-    for gid, gdata in groups.items():
-        if node_id in gdata.get("nodes", {}):
-            del groups[gid]["nodes"][node_id]
-            removed_from_group = True
-    if removed_from_group:
-        save_auto_groups(groups)
-            
-    config = load_config()
-    if node_id in config.get('disabled_nodes', []): 
-        config['disabled_nodes'].remove(node_id)
-        save_config(config)
+    # Stop xray on matching node IP (case-insensitive node id match).
+    node_ip = ""
+    for nid, ninfo in get_all_servers().items():
+        if _node_id_equals(nid, node_id):
+            node_ip = str((ninfo or {}).get('ip', '')).strip()
+            break
+    if node_ip:
+        execute_ssh_bg(node_ip, ["systemctl stop xray"])
 
-    # Strong cleanup: remove stale user records bound to deleted node.
-    users_removed = 0
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            try:
-                with open(USERS_DB, 'r') as f:
-                    db = json.load(f)
-            except Exception:
-                db = {}
-            users_to_delete = [
-                uname for uname, info in db.items()
-                if isinstance(info, dict) and str(info.get('node', '')).strip().lower() == str(node_id).strip().lower()
-            ]
-            for uname in users_to_delete:
-                del db[uname]
-                users_removed += 1
-            with open(USERS_DB, 'w') as f:
-                json.dump(db, f, indent=4)
-        
-    if removed_from_group: 
-        log_activity("Delete Node", f"node={node_id} scope=auto-group users_removed={users_removed}", "warning")
-        return redirect(request.referrer)
-    log_activity("Delete Node", f"node={node_id} scope=custom users_removed={users_removed}", "warning")
+    removed = _hard_remove_node_references(node_id, remove_from_nodes_list=True, remove_backups=False)
+    scope = "auto-group" if removed.get("groups", 0) > 0 else "custom"
+    log_activity(
+        "Delete Node",
+        f"node={node_id} scope={scope} users_removed={removed.get('users', 0)} groups_removed={removed.get('groups', 0)} ndb_removed={removed.get('nodes_db', 0)}",
+        "warning"
+    )
     return redirect(url_for('dashboard'))
 
 @app.route('/replace_id/<current_id>', methods=['POST'])
@@ -1482,8 +1600,11 @@ def _probe_node_xray_health(node_id, node_info):
         return base
 
     cmd = (
-        f"ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=no root@{ip} "
-        "'systemctl is-active xray 2>/dev/null || true'"
+        f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} "
+        "'s=$(systemctl is-active xray 2>/dev/null || true); "
+        "if [ -n \"$s\" ]; then echo \"$s\"; "
+        "elif pgrep -x xray >/dev/null 2>&1; then echo active; "
+        "else echo inactive; fi'"
     )
     try:
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
@@ -2153,52 +2274,17 @@ def restore_node_backup(backup_ref):
 
 @app.route('/purge_node/<node_id>', methods=['POST'])
 def purge_node(node_id):
-    # Ensure node references are fully removed from groups/config as well.
-    groups = load_auto_groups()
-    changed = False
-    for gid, gdata in groups.items():
-        if node_id in gdata.get("nodes", {}):
-            del groups[gid]["nodes"][node_id]
-            changed = True
-    if changed:
-        save_auto_groups(groups)
-
-    if os.path.exists(NODES_LIST):
-        with open(NODES_LIST, 'r') as f:
-            lines = f.readlines()
-        with open(NODES_LIST, 'w') as f:
-            for line in lines:
-                if line.strip() and not line.startswith(f"{node_id}|") and not line.startswith(f"{node_id} "):
-                    f.write(line)
-
-    cfg = load_config()
-    if node_id in cfg.get('disabled_nodes', []):
-        cfg['disabled_nodes'].remove(node_id)
-        save_config(cfg)
-
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: 
-                db = json.load(f)
-            users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
-            for u in users_to_delete: 
-                del db[u]
-            with open(USERS_DB, 'w') as f: 
-                json.dump(db, f)
-                
-    if os.path.exists(BACKUP_DIR):
-        for root, _, files in os.walk(BACKUP_DIR):
-            for f in files:
-                if (
-                    f.startswith(f"backup_{node_id}_")
-                    or f.startswith(f"node_backup__{node_id}__")
-                    or f"__{node_id}__" in f
-                ):
-                    try:
-                        os.remove(os.path.join(root, f))
-                    except Exception:
-                        pass
-    log_activity("Purge Node Data", f"node={node_id}", "error")
+    removed = _hard_remove_node_references(
+        node_id,
+        remove_from_nodes_list=True,
+        remove_backups=True,
+        remove_group_links=True
+    )
+    log_activity(
+        "Purge Node Data",
+        f"node={node_id} users_removed={removed.get('users', 0)} groups_removed={removed.get('groups', 0)} ndb_removed={removed.get('nodes_db', 0)}",
+        "error"
+    )
     return redirect(request.referrer)
 
 @app.route('/download_backup_global')
