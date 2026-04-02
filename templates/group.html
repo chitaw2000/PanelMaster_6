@@ -129,7 +129,7 @@
                     <i class="fa-solid fa-wave-square"></i> Ping: ...
                 </div>
                 
-                <div class="mb-4 grid grid-cols-3 gap-2">
+                <div class="mb-4 grid grid-cols-4 gap-2">
                     <form action="/restart_xray/{{ s.id }}" method="POST" class="m-0">
                         <button type="submit" class="w-full bg-slate-50 hover:bg-purple-50 border border-slate-100 text-purple-600 text-[10px] font-black py-2.5 rounded-xl transition uppercase tracking-widest" title="Restart Xray">
                             <i class="fa-solid fa-rotate-right"></i>
@@ -143,6 +143,11 @@
                     <a href="/node/{{ s.id }}" class="block text-center bg-purple-50 hover:bg-purple-600 hover:text-white border border-purple-100 text-purple-600 text-[10px] font-black py-2.5 rounded-xl transition uppercase tracking-widest shadow-sm" title="Open Panel">
                         <i class="fa-solid fa-arrow-up-right-from-square"></i>
                     </a>
+                    <form action="/reinstall_node/{{ s.id }}" method="POST" class="m-0" onsubmit="return confirm('Reinstall Xray and reprovision keys on {{ s.id }} now?');">
+                        <button type="submit" class="w-full bg-sky-50 hover:bg-sky-100 border border-sky-100 text-sky-600 text-[10px] font-black py-2.5 rounded-xl transition uppercase tracking-widest" title="Reinstall Node">
+                            <i class="fa-solid fa-screwdriver-wrench"></i>
+                        </button>
+                    </form>
                 </div>
                 
                 <div class="mb-6 flex gap-2">

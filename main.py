@@ -1832,6 +1832,97 @@ def api_stats(node_id):
     except: 
         return jsonify({"status": "error"})
 
+def _run_node_install_script(node_id, ip_str):
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "install_node.sh")
+    if not os.path.exists(script_path):
+        return False, f"install script not found: {script_path}"
+
+    with open(script_path, 'r', encoding='utf-8') as f:
+        install_script = f.read()
+
+    install_res = subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=20", "-o", "StrictHostKeyChecking=no", f"root@{ip_str}", "bash -s"],
+        input=install_script,
+        text=True,
+        capture_output=True,
+        timeout=480
+    )
+    if install_res.returncode != 0:
+        err = (install_res.stderr or install_res.stdout or "install failed").strip()
+        return False, err[:500]
+
+    verify_cmd = (
+        "command -v /usr/local/bin/xray >/dev/null 2>&1 && "
+        "command -v /usr/local/bin/v2ray-node-add-out >/dev/null 2>&1 && "
+        "command -v /usr/local/bin/v2ray-node-add-vless >/dev/null 2>&1 && "
+        "systemctl is-active --quiet xray"
+    )
+    verify_res = subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=12", "-o", "StrictHostKeyChecking=no", f"root@{ip_str}", verify_cmd],
+        capture_output=True,
+        text=True,
+        timeout=30
+    )
+    if verify_res.returncode != 0:
+        err = (verify_res.stderr or verify_res.stdout or "xray not ready").strip()
+        return False, err[:500]
+    return True, "ok"
+
+
+def _reprovision_users_after_reinstall(node_id, node_ip):
+    node_norm = str(node_id or "").strip().lower()
+    groups = load_auto_groups()
+    owner_group_ids = []
+    for gid, gdata in groups.items():
+        gnodes = (gdata or {}).get("nodes", {})
+        if any(_node_id_equals(nid, node_norm) for nid in gnodes.keys()):
+            owner_group_ids.append(str(gid))
+
+    with db_lock:
+        if not os.path.exists(USERS_DB):
+            return 0, owner_group_ids
+        try:
+            with open(USERS_DB, 'r') as f:
+                db = json.load(f)
+        except Exception:
+            db = {}
+
+    cmds = []
+    for uname, uinfo in db.items():
+        if not isinstance(uinfo, dict):
+            continue
+        if bool(uinfo.get('is_blocked', False)):
+            continue
+        user_node = str(uinfo.get('node', '')).strip().lower()
+        user_group = str(uinfo.get('group', '')).strip()
+        in_scope = (user_node == node_norm) or (user_group in owner_group_ids)
+        if not in_scope:
+            continue
+
+        uid = str(uinfo.get('uuid', '')).strip()
+        proto = str(uinfo.get('protocol', 'out')).strip()
+        if not uid:
+            continue
+        if proto == 'v2':
+            cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+        else:
+            port = str(uinfo.get('port', '')).strip()
+            if not port:
+                continue
+            cmd = get_safe_add_out_cmd(uname, uid, port)
+        cmds.append(cmd)
+
+    if not cmds:
+        return 0, owner_group_ids
+
+    chunk_size = 80
+    for i in range(0, len(cmds), chunk_size):
+        chunk = cmds[i:i + chunk_size]
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(node_ip, [prefix + " ; ".join(chunk) + suffix])
+    return len(cmds), owner_group_ids
+
 @app.route('/install_node/<node_id>', methods=['POST'])
 def install_node_action(node_id):
     wants_json = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or \
@@ -1843,45 +1934,10 @@ def install_node_action(node_id):
             return jsonify({"success": False, "error": "Node IP not found"}), 404
         return redirect(request.referrer or url_for('dashboard'))
 
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "install_node.sh")
-    if not os.path.exists(script_path):
-        if wants_json:
-            return jsonify({"success": False, "error": f"install script not found: {script_path}"}), 500
-        return redirect(request.referrer or url_for('dashboard'))
-
     ip_str = str(ip).strip()
     try:
-        with open(script_path, 'r', encoding='utf-8') as f:
-            install_script = f.read()
-
-        install_res = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=20", "-o", "StrictHostKeyChecking=no", f"root@{ip_str}", "bash -s"],
-            input=install_script,
-            text=True,
-            capture_output=True,
-            timeout=480
-        )
-        if install_res.returncode != 0:
-            err = (install_res.stderr or install_res.stdout or "install failed").strip()
-            if wants_json:
-                return jsonify({"success": False, "error": err[:500]}), 500
-            return redirect(request.referrer or url_for('dashboard'))
-
-        # Verify runtime readiness after install.
-        verify_cmd = (
-            "command -v /usr/local/bin/xray >/dev/null 2>&1 && "
-            "command -v /usr/local/bin/v2ray-node-add-out >/dev/null 2>&1 && "
-            "command -v /usr/local/bin/v2ray-node-add-vless >/dev/null 2>&1 && "
-            "systemctl is-active --quiet xray"
-        )
-        verify_res = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=12", "-o", "StrictHostKeyChecking=no", f"root@{ip_str}", verify_cmd],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if verify_res.returncode != 0:
-            err = (verify_res.stderr or verify_res.stdout or "xray not ready").strip()
+        ok, err = _run_node_install_script(node_id, ip_str)
+        if not ok:
             log_activity("Install Xray Failed", f"node={node_id} error={err[:140]}", "error")
             if wants_json:
                 return jsonify({"success": False, "error": err[:500]}), 500
@@ -1901,6 +1957,36 @@ def install_node_action(node_id):
         if wants_json:
             return jsonify({"success": False, "error": str(e)}), 500
         return redirect(request.referrer or url_for('dashboard'))
+
+@app.route('/reinstall_node/<node_id>', methods=['POST'])
+def reinstall_node_action(node_id):
+    ip = get_target_ip(node_id)
+    if not ip:
+        return redirect(request.referrer or url_for('dashboard'))
+
+    ip_str = str(ip).strip()
+    try:
+        ok, err = _run_node_install_script(node_id, ip_str)
+        if not ok:
+            log_activity("Reinstall Node Failed", f"node={node_id} error={err[:140]}", "error")
+            return redirect(request.referrer or f"/node/{node_id}")
+
+        reprovisioned, owner_groups = _reprovision_users_after_reinstall(node_id, ip_str)
+        for gid in owner_groups:
+            threading.Thread(
+                target=sync_new_node_to_subpanel,
+                args=(gid, node_id, ip_str),
+                daemon=True
+            ).start()
+
+        log_activity(
+            "Reinstall Node Success",
+            f"node={node_id} users_reprovisioned={reprovisioned} groups_synced={len(owner_groups)}",
+            "success"
+        )
+    except Exception as e:
+        log_activity("Reinstall Node Error", f"node={node_id} error={str(e)[:140]}", "error")
+    return redirect(request.referrer or f"/node/{node_id}")
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
 def restart_xray_action(node_id):

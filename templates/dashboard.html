@@ -114,6 +114,7 @@
                     <div class="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                         <button type="button" onclick="openTbModal('{{ node.id }}', '{{ node.limit_tb }}')" class="text-blue-400 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 p-2.5 rounded-xl transition-colors" title="Edit Limit (TB)"><i class="fa-solid fa-pen text-sm"></i></button>
                         <form action="/reset_node_traffic/{{ node.id }}" method="POST" onsubmit="return confirm('Reset node traffic to 0 TB for {{ node.id }}? This will NOT reset the keys inside.');" class="m-0"><button type="submit" class="text-amber-500 hover:text-amber-600 bg-amber-50 hover:bg-amber-100 p-2.5 rounded-xl transition-colors" title="Reset Node Traffic"><i class="fa-solid fa-rotate-left text-sm"></i></button></form>
+                        <form action="/reinstall_node/{{ node.id }}" method="POST" onsubmit="return confirm('Reinstall Xray and reprovision keys on {{ node.id }} now?');" class="m-0"><button type="submit" class="text-sky-500 hover:text-sky-600 bg-sky-50 hover:bg-sky-100 p-2.5 rounded-xl transition-colors" title="Reinstall Node"><i class="fa-solid fa-screwdriver-wrench text-sm"></i></button></form>
                     </div>
                 </div>
                 <a href="/node/{{ node.id }}" class="block flex-1">
