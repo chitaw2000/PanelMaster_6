@@ -994,6 +994,10 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
     time.sleep(2)
     try:
         groups = load_auto_groups()
+        gmeta = groups.get(group_id, {}) or {}
+        group_name = str(gmeta.get("name", "")).strip() if isinstance(gmeta, dict) else ""
+        if not group_name:
+            group_name = str(group_id)
         nmeta = (groups.get(group_id, {}) or {}).get("nodes", {}).get(new_node_id, {})
         display_name = str(nmeta.get("name", "")).strip() if isinstance(nmeta, dict) else ""
         if not display_name:
@@ -1032,6 +1036,8 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
 
         payload = {
             "masterGroupId": group_id,
+            # Extra group guard for external validation/mapping.
+            "groupName": group_name,
             # Keep original ID-based contract for compatibility.
             "newServerName": new_node_id,
             # Extra display fields for external panel UI.

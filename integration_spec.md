@@ -86,6 +86,46 @@ app.post(
 
 ---
 
+## 2B) Master -> External `sync-new-server` (Group Node Sync)
+
+When Master adds/syncs a node inside an auto group, it pushes this webhook.
+
+### URL order used by Master
+
+1. `POST /api/internal/sync-new-server`
+2. fallback `POST /admin/api/internal/sync-new-server`
+
+### Payload sent by Master
+
+```json
+{
+  "masterGroupId": "Node1",
+  "groupName": "Premium",
+  "newServerName": "Node3",
+  "newServerDisplayName": "Singapore-3",
+  "newServerId": "Node3",
+  "userKeys": {
+    "username_or_token": {
+      "server": "1.2.3.4",
+      "server_port": 10001,
+      "password": "uuid",
+      "method": "chacha20-ietf-poly1305"
+    }
+  }
+}
+```
+
+### Expected external behavior (recommended)
+
+- Verify `x-api-key`.
+- Validate required: `masterGroupId`, `newServerId`, `userKeys`.
+- Strong mapping guard: validate by both `masterGroupId` and `groupName` if available.
+- Use `newServerId` as primary ID key (do not map by display name).
+- Use `newServerDisplayName` only for UI text.
+- Return fast `200`/`204`, process heavy writes asynchronously if needed.
+
+---
+
 ## 3) External -> Master API Endpoints
 
 ### A) Get active groups
