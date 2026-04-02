@@ -24,7 +24,7 @@ def load_config():
         "monitor_skip_nodes": [],
         "external_sync_url": "https://dash1.dabazinme.me/api/internal/sync-user-usage",
         "external_sync_api_key": "",
-        "external_new_server_sync_url": "https://dash.datthabaluu.me/api/internal/sync-new-server",
+        "external_new_server_sync_url": "https://dash1.dabazinme.me/api/internal/sync-new-server",
         "backup_bot_enabled": False,
         "backup_bot_token": "",
         "backup_bot_admin_id": "",

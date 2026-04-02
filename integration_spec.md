@@ -99,7 +99,7 @@ When Master adds/syncs a node inside an auto group, it pushes this webhook.
 
 ### URL used by Master
 
-- `POST https://dash.datthabaluu.me/api/internal/sync-new-server`
+- `POST https://dash1.dabazinme.me/api/internal/sync-new-server`
 - Configurable via `external_new_server_sync_url` in config or env `PANEL_SYNC_NEW_SERVER_URL`
 
 ### Headers
