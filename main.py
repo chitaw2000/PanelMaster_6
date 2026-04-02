@@ -1161,14 +1161,16 @@ def resync_group_to_subpanel(group_id):
         node_ip = str(node_ip).strip()
         if not node_ip:
             continue
+        # Safety: group-level sync should only push webhook updates to external panel.
+        # Do NOT reprovision users here, otherwise all nodes restart xray at once.
         threading.Thread(
-            target=deploy_and_sync_group_node,
+            target=sync_new_node_to_subpanel,
             args=(group_id, node_id, node_ip),
             daemon=True
         ).start()
         queued += 1
 
-    log_activity("Manual Group Resync", f"group={group_id} nodes_queued={queued}", "info")
+    log_activity("Manual Group Resync", f"group={group_id} nodes_queued={queued} mode=webhook_only", "info")
     return redirect(request.referrer or f'/group/{group_id}')
 
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
