@@ -90,10 +90,12 @@ app.post(
 
 When Master adds/syncs a node inside an auto group, it pushes this webhook.
 
-### URL order used by Master
+### URL used by Master
 
-1. `POST /api/internal/sync-new-server`
-2. fallback `POST /admin/api/internal/sync-new-server`
+- Single target URL from Master config:
+  - `external_new_server_sync_url` (or env `PANEL_SYNC_NEW_SERVER_URL`)
+- Current default:
+  - `POST /admin/api/internal/sync-new-server`
 
 ### Payload sent by Master
 

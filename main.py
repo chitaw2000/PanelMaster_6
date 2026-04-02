@@ -52,6 +52,29 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=30)
 BACKUP_DIR = "/root/PanelMaster/backups"
 ACTIVITY_LOG_FILE = os.path.join(BACKUP_DIR, "dashboard_activity_log.json")
 ACTIVITY_LOG_LOCK = threading.Lock()
+_SYNC_NEW_SERVER_STATUS = {
+    "last_attempt_at": "",
+    "last_ok_at": "",
+    "last_group_id": "",
+    "last_node_id": "",
+    "last_version": "",
+    "last_status": "idle",
+    "last_url": "",
+    "last_http_code": 0,
+    "last_error": "",
+    "last_body_preview": ""
+}
+_SYNC_NEW_SERVER_STATUS_LOCK = threading.Lock()
+
+
+def _set_sync_new_server_status(**kwargs):
+    with _SYNC_NEW_SERVER_STATUS_LOCK:
+        _SYNC_NEW_SERVER_STATUS.update(kwargs)
+
+
+def _get_sync_new_server_status():
+    with _SYNC_NEW_SERVER_STATUS_LOCK:
+        return dict(_SYNC_NEW_SERVER_STATUS)
 
 if not os.path.exists(BACKUP_DIR): 
     os.makedirs(BACKUP_DIR)
@@ -1037,6 +1060,17 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
         event_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         node_suffix = str(new_node_id or "").strip().lower()
         version = f"{event_at}#{node_suffix}"
+        _set_sync_new_server_status(
+            last_attempt_at=event_at,
+            last_group_id=str(group_id),
+            last_node_id=str(new_node_id),
+            last_version=str(version),
+            last_status="sending",
+            last_url="",
+            last_http_code=0,
+            last_error="",
+            last_body_preview=""
+        )
 
         payload = {
             "masterGroupId": group_id,
@@ -1053,24 +1087,48 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
             "userKeys": user_keys
         }
         
-        headers = {"Content-Type": "application/json", "x-api-key": MASTER_API_KEY}
-        urls = [
-            "http://167.172.91.222:4000/api/internal/sync-new-server",
-            "http://167.172.91.222:4000/admin/api/internal/sync-new-server"
-        ]
+        cfg = load_config() or {}
+        sync_key = str(cfg.get("external_sync_api_key", "")).strip() or str(MASTER_API_KEY).strip()
+        primary_url = str(cfg.get("external_new_server_sync_url", "")).strip()
+        if not primary_url:
+            primary_url = str(
+                os.environ.get(
+                    "PANEL_SYNC_NEW_SERVER_URL",
+                    "https://dash.datthabaluu.me/admin/api/internal/sync-new-server"
+                )
+            ).strip()
+        headers = {"Content-Type": "application/json", "x-api-key": sync_key}
+        urls = [primary_url] if primary_url else []
         delivered = False
         for url in urls:
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=10)
+                body_preview = str((r.text or "").strip()).replace("\n", " ")[:220]
+                _set_sync_new_server_status(
+                    last_url=str(url),
+                    last_http_code=int(r.status_code),
+                    last_body_preview=body_preview,
+                    last_error=""
+                )
                 if 200 <= r.status_code < 300:
                     delivered = True
+                    _set_sync_new_server_status(
+                        last_ok_at=event_at,
+                        last_status="ok"
+                    )
                     break
             except Exception:
-                pass
+                _set_sync_new_server_status(
+                    last_url=str(url),
+                    last_status="request_error",
+                    last_error="request_failed"
+                )
         if not delivered:
+            _set_sync_new_server_status(last_status="failed_all_targets")
             print(f"Sync New Server Error: delivery failed for {group_id}/{new_node_id}")
         
     except Exception as e:
+        _set_sync_new_server_status(last_status="exception", last_error=str(e)[:220])
         print(f"Sync New Server Error: {e}")
 
 def provision_group_users_to_node(group_id, node_id, node_ip, only_usernames=None):
@@ -1877,6 +1935,15 @@ def api_search_all():
 @app.route('/api/internal/monitor-status')
 def api_internal_monitor_status():
     return jsonify({"status": "ok", "monitor": get_monitor_status()})
+
+
+@app.route('/api/internal/sync-new-server-status')
+def api_internal_sync_new_server_status():
+    group_id = str(request.args.get("group_id", "")).strip()
+    info = _get_sync_new_server_status()
+    if group_id:
+        info["matches_group"] = str(info.get("last_group_id", "")).strip().lower() == group_id.lower()
+    return jsonify({"status": "ok", "sync_new_server": info})
 
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):

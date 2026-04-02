@@ -91,6 +91,15 @@
                 </button>
             </form>
         </div>
+        <div class="mt-4 bg-black/20 border border-white/10 rounded-2xl p-4 flex flex-col gap-1.5 text-xs">
+            <div class="flex items-center justify-between gap-2">
+                <p class="text-[10px] font-black text-purple-200 uppercase tracking-widest">Last Sync-New-Server Version</p>
+                <button type="button" onclick="refreshSyncNewServerStatus()" class="text-[10px] font-black bg-white/15 hover:bg-white/25 text-white px-2.5 py-1 rounded-lg border border-white/15 transition">Refresh</button>
+            </div>
+            <p id="syncVersionLine" class="font-mono font-black text-white break-all">version: -</p>
+            <p id="syncAtLine" class="text-purple-100/90 font-bold">at: -</p>
+            <p id="syncStatusLine" class="text-purple-100/90 font-bold">status: idle</p>
+        </div>
     </div>
 
     <div class="flex gap-2 overflow-x-auto whitespace-nowrap mb-8 bg-slate-200/50 p-1.5 rounded-2xl w-fit">
@@ -678,6 +687,28 @@ function switchGroupTab(tab) {
     document.getElementById('groupTabBtn-'+tab).className="px-6 py-2.5 text-sm font-black rounded-xl transition-all shadow-sm bg-white text-purple-600";
 }
 
+async function refreshSyncNewServerStatus() {
+    const vEl = document.getElementById('syncVersionLine');
+    const aEl = document.getElementById('syncAtLine');
+    const sEl = document.getElementById('syncStatusLine');
+    if (!vEl || !aEl || !sEl) return;
+    try {
+        const res = await fetch('/api/internal/sync-new-server-status?group_id={{ group_id }}');
+        const json = await res.json();
+        const d = (json && json.sync_new_server) ? json.sync_new_server : {};
+        const version = d.last_version || '-';
+        const at = d.last_attempt_at || '-';
+        const code = d.last_http_code ? ` (${d.last_http_code})` : '';
+        const status = (d.last_status || 'idle') + code;
+        const url = d.last_url ? ` -> ${d.last_url}` : '';
+        vEl.innerText = `version: ${version}`;
+        aEl.innerText = `at: ${at}`;
+        sEl.innerText = `status: ${status}${url}`;
+    } catch (e) {
+        sEl.innerText = 'status: unable_to_load';
+    }
+}
+
 let checkNodeId = '';
 document.addEventListener('DOMContentLoaded', () => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -692,6 +723,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         window.history.replaceState({}, document.title, window.location.pathname);
     }
+    refreshSyncNewServerStatus();
+    setInterval(refreshSyncNewServerStatus, 10000);
 });
 
 async function checkSSH() {
