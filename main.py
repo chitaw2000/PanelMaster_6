@@ -971,7 +971,7 @@ def group_view(group_id):
             if changed_ip and changed_users:
                 threading.Thread(
                     target=sync_new_node_to_subpanel,
-                    args=(group_id, changed_nid, str(changed_ip).strip(), list(changed_users)),
+                    args=(group_id, changed_nid, str(changed_ip).strip()),
                     daemon=True
                 ).start()
     for ip, cmds in cmds_by_ip.items():
@@ -1013,7 +1013,7 @@ def group_view(group_id):
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats, group_used_gb=group_used_gb)
 
-def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames=None):
+def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
     time.sleep(2)
     try:
         groups = load_auto_groups()
@@ -1030,12 +1030,9 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
             if not os.path.exists(USERS_DB): return
             with open(USERS_DB, 'r') as f: db = json.load(f)
 
-        only_set = set(only_usernames or [])
         user_keys = {}
         for uname, uinfo in db.items():
             if isinstance(uinfo, dict) and uinfo.get('group') == group_id and uinfo.get('token'):
-                if only_set and uname not in only_set:
-                    continue
                 uid = uinfo.get('uuid')
                 port = uinfo.get('port')
                 proto = uinfo.get('protocol', 'v2')
@@ -1052,7 +1049,6 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
                         "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
                     }
 
-                # Sub-panel side matches by username (not master internal token).
                 user_keys[uname] = k
 
         if not user_keys: return 
@@ -1074,21 +1070,18 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
 
         payload = {
             "masterGroupId": group_id,
-            # Extra group guard for external validation/mapping.
             "groupName": group_name,
-            # Event version/timestamp for external visibility/debugging.
             "version": version,
             "at": event_at,
-            # Keep original ID-based contract for compatibility.
-            "newServerName": new_node_id,
-            # Extra display fields for external panel UI.
-            "newServerDisplayName": display_name,
             "newServerId": new_node_id,
+            "newServerDisplayName": display_name,
             "userKeys": user_keys
         }
         
         cfg = load_config() or {}
-        sync_key = str(cfg.get("external_sync_api_key", "")).strip() or str(MASTER_API_KEY).strip()
+        sync_key = str(cfg.get("external_sync_api_key", "")).strip()
+        if not sync_key:
+            sync_key = str(os.environ.get("PANEL_SYNC_API_KEY", "pmk_XI1fBk3DEEekIDwgngJWQmjFXR0TziWkzw9UvmNB_Uk")).strip()
         primary_url = str(cfg.get("external_new_server_sync_url", "")).strip()
         if not primary_url:
             primary_url = str(
@@ -1197,7 +1190,7 @@ def deploy_and_sync_group_node(group_id, node_id, node_ip, only_usernames=None):
         return
     provision_group_users_to_node(group_id, node_id, node_ip, only_usernames=only_usernames)
     time.sleep(1)
-    sync_new_node_to_subpanel(group_id, node_id, node_ip, only_usernames=only_usernames)
+    sync_new_node_to_subpanel(group_id, node_id, node_ip)
 
 
 def _bootstrap_group_node_after_add(group_id, node_id, node_ip):

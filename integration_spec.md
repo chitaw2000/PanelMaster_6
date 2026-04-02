@@ -90,47 +90,78 @@ app.post(
 
 When Master adds/syncs a node inside an auto group, it pushes this webhook.
 
+### Trigger events
+
+- New node added to a group
+- Node reinstalled
+- Manual "Sync" button pressed in group UI
+- Any event that changes node config for a group
+
 ### URL used by Master
 
-- Single target URL from Master config:
-  - `external_new_server_sync_url` (or env `PANEL_SYNC_NEW_SERVER_URL`)
-- Current default:
-  - `POST /api/internal/sync-new-server`
+- `POST https://dash.datthabaluu.me/api/internal/sync-new-server`
+- Configurable via `external_new_server_sync_url` in config or env `PANEL_SYNC_NEW_SERVER_URL`
+
+### Headers
+
+```
+Content-Type: application/json
+x-api-key: pmk_XI1fBk3DEEekIDwgngJWQmjFXR0TziWkzw9UvmNB_Uk
+```
 
 ### Payload sent by Master
 
 ```json
 {
-  "masterGroupId": "Node1",
-  "groupName": "Premium",
-  "version": "2026-04-02T15:45:10Z#node3",
-  "at": "2026-04-02T15:45:10Z",
-  "newServerName": "Node3",
+  "masterGroupId": "Test_1",
+  "groupName": "Test_1",
+  "version": "2026-04-02T18:00:00Z#sg3",
+  "at": "2026-04-02T18:00:00Z",
+  "newServerId": "sg3",
   "newServerDisplayName": "Singapore-3",
-  "newServerId": "Node3",
   "userKeys": {
-    "username_or_token": {
+    "alice": {
       "server": "1.2.3.4",
       "server_port": 10001,
-      "password": "uuid",
-      "method": "chacha20-ietf-poly1305"
-    }
+      "password": "alice-uuid-here",
+      "method": "chacha20-ietf-poly1305",
+      "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
+    },
+    "bob": {
+      "server": "1.2.3.4",
+      "server_port": 10002,
+      "password": "bob-uuid-here",
+      "method": "chacha20-ietf-poly1305",
+      "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
+    },
+    "charlie": "vless://uuid@1.2.3.4:8080?type=ws&path=/vless#charlie"
   }
 }
 ```
 
-### Expected external behavior (recommended)
+### CRITICAL RULES
+
+1. **`userKeys` contains EVERY user in the group**, not a subset.
+   Each key = exact local username. Each value = that user's individual
+   SS config object (or VLESS URL string) for the new node.
+   If a user is missing, that user will NOT get the new node.
+
+2. **`masterGroupId`** must match exactly with external panel DB.
+
+3. **`newServerId`** = node ID (primary key).
+   **`newServerDisplayName`** = human-readable label (for UI only).
+
+4. **`version`** = `"<ISO_timestamp>#<node_id>"` — tracking field.
+   **`at`** = `"<ISO_timestamp>"` — event timestamp (UTC).
+
+### Expected external behavior
 
 - Verify `x-api-key`.
 - Validate required: `masterGroupId`, `newServerId`, `userKeys`.
-- Strong mapping guard: validate by both `masterGroupId` and `groupName` if available.
-- Expose webhook metadata for UI/debug:
-  - `version`: webhook version string from master
-  - `at`: event timestamp (UTC ISO)
-  - `newServerId`: last synced server ID
 - Use `newServerId` as primary ID key (do not map by display name).
 - Use `newServerDisplayName` only for UI text.
-- Return fast `200`/`204`, process heavy writes asynchronously if needed.
+- Return `200` with `{"success": true}`.
+- `400` = missing fields, `404` = unknown masterGroupId, `401` = wrong key.
 
 ---
 
