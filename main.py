@@ -1094,7 +1094,7 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip, only_usernames
             primary_url = str(
                 os.environ.get(
                     "PANEL_SYNC_NEW_SERVER_URL",
-                    "https://dash.datthabaluu.me/admin/api/internal/sync-new-server"
+                    "https://dash.datthabaluu.me/api/internal/sync-new-server"
                 )
             ).strip()
         headers = {"Content-Type": "application/json", "x-api-key": sync_key}

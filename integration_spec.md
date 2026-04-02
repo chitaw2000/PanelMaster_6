@@ -95,7 +95,7 @@ When Master adds/syncs a node inside an auto group, it pushes this webhook.
 - Single target URL from Master config:
   - `external_new_server_sync_url` (or env `PANEL_SYNC_NEW_SERVER_URL`)
 - Current default:
-  - `POST /admin/api/internal/sync-new-server`
+  - `POST /api/internal/sync-new-server`
 
 ### Payload sent by Master
 
