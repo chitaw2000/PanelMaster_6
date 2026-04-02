@@ -710,6 +710,33 @@ def _node_id_equals(a, b):
     return str(a or "").strip().lower() == str(b or "").strip().lower()
 
 
+def _node_id_exists_ci(candidate_id, all_nodes):
+    c = str(candidate_id or "").strip()
+    return any(_node_id_equals(nid, c) for nid in (all_nodes or {}).keys())
+
+
+def _is_node_runtime_ready(node_ip):
+    ip = str(node_ip or "").strip()
+    if not ip:
+        return False
+    try:
+        cmd = (
+            "command -v /usr/local/bin/xray >/dev/null 2>&1 && "
+            "command -v /usr/local/bin/v2ray-node-add-out >/dev/null 2>&1 && "
+            "command -v /usr/local/bin/v2ray-node-add-vless >/dev/null 2>&1 && "
+            "(systemctl is-active --quiet xray || pgrep -x xray >/dev/null 2>&1)"
+        )
+        res = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=no", f"root@{ip}", cmd],
+            capture_output=True,
+            text=True,
+            timeout=12
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
 def _hard_remove_node_references(
     node_id,
     remove_from_nodes_list=True,
@@ -1094,6 +1121,9 @@ def deploy_and_sync_group_node(group_id, node_id, node_ip, only_usernames=None):
     1) Provision existing users on server node.
     2) Push updated key mapping to external panel.
     """
+    if not _is_node_runtime_ready(node_ip):
+        log_activity("Deploy Node Blocked", f"group={group_id} node={node_id} reason=node_not_ready", "error")
+        return
     provision_group_users_to_node(group_id, node_id, node_ip, only_usernames=only_usernames)
     time.sleep(1)
     sync_new_node_to_subpanel(group_id, node_id, node_ip, only_usernames=only_usernames)
@@ -1107,7 +1137,7 @@ def add_server_to_group(group_id):
     groups = load_auto_groups()
     nodes = get_all_servers()
     
-    if nid in nodes:
+    if _node_id_exists_ci(nid, nodes):
         return f"<script>alert('Error: Server ID [{nid}] already exists!'); window.history.back();</script>"
         
     if group_id in groups and nid and nip:
@@ -1437,7 +1467,7 @@ def add_node():
     
     if n_id and n_name and n_ip:
         nodes = get_all_servers()
-        if n_id in nodes:
+        if _node_id_exists_ci(n_id, nodes):
             return f"<script>alert('Error: Node ID [{n_id}] already exists!'); window.history.back();</script>"
             
         if not os.path.exists(NODES_LIST):
