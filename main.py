@@ -252,8 +252,10 @@ def login():
 
         token, admin_id = resolve_auth_telegram_target(cfg)
         if not token or not admin_id:
-            error = "2FA is enabled but Telegram token/admin ID is not configured."
-            return render_template('login.html', error=error)
+            session['logged_in'] = True
+            session['auth_user'] = username
+            log_activity("Auth Login Success", f"user={username or '-'} 2fa_skipped=telegram_not_configured", "success")
+            return redirect(url_for('dashboard'))
 
         ttl_seconds = int(cfg.get("auth_otp_ttl_seconds", 300) or 300)
         challenge_id, code, expires_ts = create_otp_challenge(username, ttl_seconds=ttl_seconds)
