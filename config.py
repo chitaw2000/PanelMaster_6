@@ -15,7 +15,7 @@ def load_config():
         "mod_ids": [],
         "auth_username": "admin",
         "auth_password_hash": "",
-        "auth_2fa_enabled": True,
+        "auth_2fa_enabled": False,
         "auth_telegram_bot_token": "",
         "auth_telegram_admin_id": "",
         "auth_otp_ttl_seconds": 300,
