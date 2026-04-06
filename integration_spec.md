@@ -38,7 +38,10 @@ Keep at least route (1). Best: support both.
   "totalGB": 50,
   "remainingGB": 37.6544,
   "expireDate": "2026-04-30",
-  "isBlocked": false
+  "isBlocked": false,
+  "isActive": true,
+  "node": "Node3",
+  "group": "Test_1"
 }
 ```
 

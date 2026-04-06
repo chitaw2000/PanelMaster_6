@@ -134,8 +134,13 @@
                 <span class="text-xs font-mono font-bold text-slate-400 mb-6 flex items-center gap-1.5">
                     <i class="fa-solid fa-globe text-purple-300"></i> {{ s.ip }}
                 </span>
-                <div id="ping_{{ s.id }}" class="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-500 mb-6">
-                    <i class="fa-solid fa-wave-square"></i> Ping: ...
+                <div class="flex items-center gap-3 mb-6">
+                    <div id="ping_{{ s.id }}" class="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
+                        <i class="fa-solid fa-wave-square"></i> Ping: ...
+                    </div>
+                    <div class="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg border {% if s.active > 0 %}border-emerald-200 bg-emerald-50 text-emerald-600{% else %}border-slate-200 bg-slate-50 text-slate-500{% endif %}">
+                        <i class="fa-solid fa-user-check"></i> Active: {{ s.active }} / {{ s.count }}
+                    </div>
                 </div>
                 
                 <div class="mb-4 grid grid-cols-4 gap-2">

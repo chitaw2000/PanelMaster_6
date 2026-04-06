@@ -654,9 +654,10 @@ def dashboard():
         limit = gdata.get("limit", 30)
         g_nodes = gdata.get("nodes", {})
         g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
+        g_active = sum(1 for uname, i in db.items() if isinstance(i, dict) and i.get("group") == gid and uname in active_users and not i.get('is_blocked'))
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         api_domain = gdata.get("api_domain", "")
-        group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "api_domain": api_domain, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
+        group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "api_domain": api_domain, "node_count": len(g_nodes), "total_keys": g_keys, "active_keys": g_active, "used_gb": g_used_gb})
 
     backup_inventory = list_backups(BACKUP_DIR)
     raw_backups = backup_inventory.get("node_backups", {})
@@ -1001,11 +1002,14 @@ def group_view(group_id):
         is_alarm = limit_tb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
         
+        active_count = sum(1 for uname, ui in db.items() if isinstance(ui, dict) and ui.get('group') == group_id and ui.get('node') == nid and uname in active_users and not ui.get('is_blocked'))
+
         server_stats.append({
             "id": nid,
             "name": nname,
             "ip": nip,
             "count": counts[nid],
+            "active": active_count,
             "limit": limit,
             "used_gb": used_gb,
             "limit_tb": limit_tb,
@@ -1943,6 +1947,45 @@ def api_internal_sync_new_server_status():
     if group_id:
         info["matches_group"] = str(info.get("last_group_id", "")).strip().lower() == group_id.lower()
     return jsonify({"status": "ok", "sync_new_server": info})
+
+@app.route('/api/node-active-users')
+def api_node_active_users():
+    with db_lock:
+        db = {}
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+    active_users = check_live_status(db)
+    groups = load_auto_groups()
+    all_servers = get_all_servers()
+
+    node_data = {}
+    for uname, uinfo in db.items():
+        if not isinstance(uinfo, dict): continue
+        nid = uinfo.get('node')
+        if not nid: continue
+        if nid not in node_data:
+            node_data[nid] = {"nodeId": nid, "totalUsers": 0, "activeUsers": 0, "users": []}
+        node_data[nid]["totalUsers"] += 1
+        is_active = uname in active_users and not uinfo.get('is_blocked')
+        if is_active:
+            node_data[nid]["activeUsers"] += 1
+        node_data[nid]["users"].append({
+            "username": uname,
+            "isActive": is_active,
+            "isBlocked": bool(uinfo.get('is_blocked')),
+            "usedGB": round(float(uinfo.get('used_bytes', 0)) / (1024**3), 4),
+            "totalGB": float(uinfo.get('total_gb', 0)),
+            "node": nid,
+            "group": uinfo.get('group', '')
+        })
+
+    for nid in node_data:
+        ninfo = all_servers.get(nid, {})
+        node_data[nid]["nodeName"] = ninfo.get('name', nid)
+        node_data[nid]["nodeIp"] = ninfo.get('ip', '')
+
+    return jsonify({"success": True, "nodes": node_data})
+
 
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):

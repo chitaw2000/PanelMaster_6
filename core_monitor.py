@@ -237,7 +237,10 @@ def sync_usage_to_subpanel(username, uinfo):
             "totalGB": total_gb,
             "remainingGB": round(remaining_gb, 4),
             "expireDate": uinfo.get('expire_date'),
-            "isBlocked": bool(uinfo.get('is_blocked', False))
+            "isBlocked": bool(uinfo.get('is_blocked', False)),
+            "isActive": bool(uinfo.get('is_online', False)) and not bool(uinfo.get('is_blocked', False)),
+            "node": uinfo.get('node', ''),
+            "group": uinfo.get('group', '')
         }
 
         headers = {"Content-Type": "application/json", "x-api-key": _get_sync_api_key()}
