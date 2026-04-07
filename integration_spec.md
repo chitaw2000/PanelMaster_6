@@ -261,7 +261,18 @@ or
 
 ---
 
-## 6) Reverse Proxy / WAF Note
+## 6) Duplicate Usernames Across Groups
+
+Master Panel supports the **same username in different auto-node groups**.
+
+- Internal DB key: `group_id::username` (e.g. `Group_A::alice`, `Group_B::alice`)
+- External-facing payloads always send the **display username** (e.g. `alice`) plus the **group** field
+- The external panel should use `group + username` as the composite unique key
+- Backward compatible: existing entries without `::` continue to work
+
+---
+
+## 7) Reverse Proxy / WAF Note
 
 If using Cloudflare/WAF, allow API routes and custom header `x-api-key` for:
 - `/api/*`

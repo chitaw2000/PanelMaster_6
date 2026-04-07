@@ -1,7 +1,7 @@
 import json, os, time, subprocess, threading, requests
 from datetime import datetime
 
-from utils import get_all_servers, db_lock
+from utils import get_all_servers, db_lock, get_display_name
 from core_auto import load_auto_groups
 from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
@@ -221,9 +221,9 @@ def query_ip_user_totals(ip):
         _mark_ip_result(ip, False)
     return totals
 
-def sync_usage_to_subpanel(username, uinfo):
-    # Best-effort usage sync for external panel.
+def sync_usage_to_subpanel(db_key, uinfo):
     try:
+        username = get_display_name(db_key, uinfo)
         now_ts = int(time.time())
         _set_monitor_status(last_sync_attempt_at=now_ts, last_sync_user=str(username))
         used_bytes = float(uinfo.get('used_bytes', 0) or 0)
@@ -371,7 +371,7 @@ def monitor_traffic():
                 # If user is already blocked, keep retrying node-side enforcement until success.
                 if uinfo.get('is_blocked', False):
                     if not bool(uinfo.get('block_enforced', False)):
-                        enforced = suspend_user_everywhere(uname, uinfo)
+                        enforced = suspend_user_everywhere(get_display_name(uname, uinfo), uinfo)
                         if enforced:
                             uinfo['block_enforced'] = True
                             db_changed = True
@@ -379,6 +379,8 @@ def monitor_traffic():
 
                 if uname not in user_ips_map:
                     continue
+
+                display = get_display_name(uname, uinfo)
 
                 last_map = uinfo.get('last_raw_bytes_map')
                 if not isinstance(last_map, dict):
@@ -388,7 +390,7 @@ def monitor_traffic():
                 current_total = 0.0
 
                 for ip in user_ips_map[uname]:
-                    current_val = float(ip_totals_map.get(ip, {}).get(uname, 0.0))
+                    current_val = float(ip_totals_map.get(ip, {}).get(display, 0.0))
                     last_val = float(last_map.get(ip, 0.0) or 0.0)
 
                     diff = 0.0
@@ -445,7 +447,7 @@ def monitor_traffic():
                     uinfo['is_online'] = False
                     uinfo['block_enforced'] = False
                     db_changed = True
-                    enforced = suspend_user_everywhere(uname, uinfo)
+                    enforced = suspend_user_everywhere(display, uinfo)
                     if enforced:
                         uinfo['block_enforced'] = True
                         db_changed = True

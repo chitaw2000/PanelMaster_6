@@ -250,14 +250,14 @@
                         {% for u in users %}
                         <tr class="hover:bg-slate-50/80 transition-colors {% if u.is_blocked %}opacity-70 bg-red-50/30{% endif %}">
                             <td class="p-6 text-center">
-                                <input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4 cursor-pointer accent-purple-600 rounded" onchange="updateBulkUI()">
+                                <input type="checkbox" name="usernames" value="{{ u.db_key }}" class="w-4 h-4 cursor-pointer accent-purple-600 rounded" onchange="updateBulkUI()" data-display="{{ u.username }}">
                             </td>
                             
                             <td class="p-6">
                                 <div class="mb-2">
                                     <span class="bg-purple-50 text-purple-600 font-mono text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-widest border border-purple-100">{{ u.node }}</span>
                                 </div>
-                                <form action="/switch_user_node/{{ u.username }}" method="POST" class="m-0 flex items-center gap-1">
+                                <form action="/switch_user_node/{{ u.db_key }}" method="POST" class="m-0 flex items-center gap-1">
                                     <select name="target_node" class="bg-white border border-slate-200 text-[10px] font-bold py-1 px-2 rounded focus:outline-none text-slate-600 w-20" required>
                                         {% for s in server_stats %}
                                             <option value="{{ s.id }}" {% if u.node == s.id %}selected{% endif %}>{{ s.name or s.id }} ({{ s.id }})</option>
@@ -327,22 +327,22 @@
 
                             <td class="p-6 text-center">
                                 <div class="flex justify-center gap-3 items-center">
-                                    <button type="button" onclick="openIpModal('{{ u.username }}')" class="bg-purple-50 text-purple-600 hover:bg-purple-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="View Active Connections">
+                                    <button type="button" onclick="openIpModal('{{ u.db_key }}')" class="bg-purple-50 text-purple-600 hover:bg-purple-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="View Active Connections">
                                         <i class="fa-solid fa-location-dot text-xs"></i>
                                     </button>
                                     
                                     <label class="relative inline-flex items-center cursor-pointer mx-1" title="Block User">
-                                        <input type="checkbox" class="sr-only peer" {% if not u.is_blocked %}checked{% endif %} onchange="submitToggle('{{ u.username }}')">
+                                        <input type="checkbox" class="sr-only peer" {% if not u.is_blocked %}checked{% endif %} onchange="submitToggle('{{ u.db_key }}')">
                                         <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
                                     </label>
                                     
-                                    <button type="button" onclick="openRenew('{{ u.username }}')" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Renew Key"><i class="fa-solid fa-rotate text-xs"></i></button>
+                                    <button type="button" onclick="openRenew('{{ u.db_key }}')" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Renew Key"><i class="fa-solid fa-rotate text-xs"></i></button>
                                     
-                                    <button type="button" onclick="openM('{{ u.username }}', '{{ u.get('protocol', 'v2') }}', '{{ u.get('port', '443') }}', '{{ u.get('uuid', u.get('password', '')) }}', '{{ u.total_gb }}', '{{ u.expire_date }}')" class="bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Edit Profile Details">
+                                    <button type="button" onclick="openM('{{ u.db_key }}', '{{ u.get('protocol', 'v2') }}', '{{ u.get('port', '443') }}', '{{ u.get('uuid', u.get('password', '')) }}', '{{ u.total_gb }}', '{{ u.expire_date }}')" class="bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Edit Profile Details">
                                         <i class="fa-solid fa-pen text-xs"></i>
                                     </button>
                                     
-                                    <button type="button" onclick="if(confirm('Delete {{ u.username }}?')) submitDelete('{{ u.username }}');" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Delete Key"><i class="fa-solid fa-trash text-xs"></i></button>
+                                    <button type="button" onclick="if(confirm('Delete {{ u.username }}?')) submitDelete('{{ u.db_key }}');" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Delete Key"><i class="fa-solid fa-trash text-xs"></i></button>
                                 </div>
                             </td>
                         </tr>

@@ -51,3 +51,53 @@ def check_live_status(db):
                 active.add(uname)
         except: pass
     return active
+
+
+COMPOSITE_SEP = "::"
+
+def make_db_key(group_id, username):
+    """Build composite DB key for auto-group users: 'group_id::username'."""
+    if group_id:
+        return f"{group_id}{COMPOSITE_SEP}{username}"
+    return username
+
+def get_display_name(db_key, uinfo=None):
+    """Extract display username from a DB key (backward compatible)."""
+    if uinfo and isinstance(uinfo, dict) and uinfo.get("username"):
+        return str(uinfo["username"])
+    if COMPOSITE_SEP in str(db_key):
+        return str(db_key).split(COMPOSITE_SEP, 1)[1]
+    return str(db_key)
+
+def find_db_key(db, username, group_id=None):
+    """Find the actual DB key for a given display username + optional group."""
+    if not username:
+        return None
+    u = str(username).strip()
+    if group_id:
+        composite = make_db_key(group_id, u)
+        if composite in db:
+            return composite
+    if u in db:
+        return u
+    for k, v in db.items():
+        if not isinstance(v, dict):
+            continue
+        display = get_display_name(k, v)
+        if display == u:
+            if group_id and v.get("group") == group_id:
+                return k
+            if not group_id:
+                return k
+    return None
+
+def find_all_db_keys(db, username):
+    """Find ALL DB keys matching a display username (across groups)."""
+    u = str(username).strip()
+    keys = []
+    for k, v in db.items():
+        if not isinstance(v, dict):
+            continue
+        if get_display_name(k, v) == u:
+            keys.append(k)
+    return keys

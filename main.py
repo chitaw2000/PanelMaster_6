@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, MASTER_API_KEY, load_config, save_config
-from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB
+from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB, make_db_key, get_display_name, find_db_key
 from core_auto import load_auto_groups, save_auto_groups
 
 from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cmd
@@ -927,16 +927,17 @@ def group_view(group_id):
                 uid = info.get('uuid')
                 port = info.get('port')
                 proto = info.get('protocol', 'v2')
-                safe_u = urllib.parse.quote(uname)
-                
+                display = get_display_name(uname, info)
+                safe_u = urllib.parse.quote(display)
+
                 if proto == 'v2':
                     expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                    cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+                    cmd = f"/usr/local/bin/v2ray-node-add-vless {display} {uid}"
                 else:
                     credentials = f"chacha20-ietf-poly1305:{uid}"
                     b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                     expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
-                    cmd = get_safe_add_out_cmd(uname, uid, port)
+                    cmd = get_safe_add_out_cmd(display, uid, port)
                     
                 if info.get('key') != expected_key:
                     info['key'] = expected_key
@@ -948,7 +949,8 @@ def group_view(group_id):
             info['used_bytes'] = float(info.get('used_bytes', 0))
             info['total_gb'] = float(info.get('total_gb', 0))
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
-            info['username'] = uname
+            info['db_key'] = uname
+            info['username'] = get_display_name(uname, info)
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
@@ -1042,7 +1044,8 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
                 uid = uinfo.get('uuid')
                 port = uinfo.get('port')
                 proto = uinfo.get('protocol', 'v2')
-                safe_u = urllib.parse.quote(uname)
+                display = get_display_name(uname, uinfo)
+                safe_u = urllib.parse.quote(display)
 
                 if proto == 'v2':
                     k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -1055,7 +1058,7 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
                         "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
                     }
 
-                user_keys[uname] = k
+                user_keys[display] = k
 
         if not user_keys: return 
 
@@ -1470,17 +1473,17 @@ def node_view(node_id):
             uid = info.get('uuid')
             port = info.get('port')
             proto = info.get('protocol', 'v2')
-            safe_u = urllib.parse.quote(uname)
-            
-            # 🚀 ဝင်ကြည့်နေသော ဆာဗာ၏ IP ဖြင့်သာ Key ကို အတိအကျ ပြောင်းထုတ်ပေးမည်
+            display = get_display_name(uname, info)
+            safe_u = urllib.parse.quote(display)
+
             if proto == 'v2':
                 expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+                cmd = f"/usr/local/bin/v2ray-node-add-vless {display} {uid}"
             else:
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
-                cmd = get_safe_add_out_cmd(uname, uid, port)
+                cmd = get_safe_add_out_cmd(display, uid, port)
                 
             # Database တွင် အပြောင်းအလဲလုပ်ခြင်းကို Active ဖြစ်သော ပင်မဆာဗာ (၁) ခုတည်းအတွက်သာ လုပ်မည်
             if is_active_node:
@@ -1495,11 +1498,11 @@ def node_view(node_id):
             display_info['used_bytes'] = float(display_info.get('used_bytes', 0))
             display_info['total_gb'] = float(display_info.get('total_gb', 0))
             display_info['used_gb_str'] = f"{(display_info['used_bytes'] / (1024**3)):.2f}"
-            display_info['username'] = uname
-            
-            # 🚀 အဓိက - ဤ Node အတွက် အတိအကျ ပြောင်းလဲထားသော Key ကို မျက်နှာပြင်တွင် ပြမည်
+            display_info['db_key'] = uname
+            display_info['username'] = display
+
             display_info['actual_key'] = expected_key
-            
+
             display_info['is_active'] = uname in active_users and not display_info.get('is_blocked')
             display_info['protocol_label'] = "VLESS" if display_info.get('protocol') == 'v2' else "Outline SS"
             
@@ -1902,9 +1905,11 @@ def api_search_all():
     for uname, uinfo in db.items():
         if not isinstance(uinfo, dict):
             continue
+        display = get_display_name(uname, uinfo)
         node_id = str(uinfo.get("node", "")).strip()
         group_id = str(uinfo.get("group", "")).strip()
         text_blob = " ".join([
+            display,
             uname,
             str(uinfo.get("key_id", "")),
             str(uinfo.get("protocol", "")),
@@ -1916,7 +1921,7 @@ def api_search_all():
             used_gb = float(uinfo.get("used_bytes", 0) or 0) / (1024 ** 3)
             total_gb = float(uinfo.get("total_gb", 0) or 0)
             user_results.append({
-                "username": uname,
+                "username": display,
                 "node": node_id,
                 "group": group_id,
                 "blocked": bool(uinfo.get("is_blocked", False)),
@@ -1970,7 +1975,7 @@ def api_node_active_users():
         if is_active:
             node_data[nid]["activeUsers"] += 1
         node_data[nid]["users"].append({
-            "username": uname,
+            "username": get_display_name(uname, uinfo),
             "isActive": is_active,
             "isBlocked": bool(uinfo.get('is_blocked')),
             "usedGB": round(float(uinfo.get('used_bytes', 0)) / (1024**3), 4),
@@ -2345,10 +2350,10 @@ def switch_user_node(username):
         uid = uinfo.get('uuid')
         port = uinfo.get('port')
         proto = uinfo.get('protocol', 'out')
-        safe_u = urllib.parse.quote(username)
+        display = get_display_name(username, uinfo)
+        safe_u = urllib.parse.quote(display)
         is_blocked = uinfo.get('is_blocked', False)
 
-        # Collect pending bytes from old active node before switching.
         if old_ip:
             try:
                 cmd_stats = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
@@ -2358,7 +2363,7 @@ def switch_user_node(username):
                     current_val = 0.0
                     for s in stats:
                         p = s.get("name", "").split(">>>")
-                        if len(p) >= 4 and p[0] == "user" and p[1] == username:
+                        if len(p) >= 4 and p[0] == "user" and p[1] == display:
                             current_val += float(s.get("value", 0))
 
                     last_val = float(uinfo.get('last_raw_bytes', 0.0))
@@ -2380,8 +2385,7 @@ def switch_user_node(username):
         with open(USERS_DB, 'w') as f:
             json.dump(db, f, indent=4)
 
-    # Pre-provision mode: UI switch တွင် DB/key server သာ ပြောင်းမည် (node sync မလုပ်တော့)
-    log_activity("Switch User Node", f"user={username} from={old_node} to={target_node}", "info")
+    log_activity("Switch User Node", f"user={display} from={old_node} to={target_node}", "info")
 
     return redirect(request.referrer or url_for('dashboard'))
 

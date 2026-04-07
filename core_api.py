@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading, time
 from datetime import datetime, timedelta
 
-from utils import get_all_servers, db_lock
+from utils import get_all_servers, db_lock, make_db_key, get_display_name, find_db_key
 from core_auto import load_auto_groups
 from core_engine import get_safe_delete_cmd, get_safe_add_out_cmd
 
@@ -247,8 +247,9 @@ def api_generate_keys():
         else:
             db = {}
 
-        if username in db:
-            return jsonify({"success": False, "error": "User already exists"}), 400
+        db_key = make_db_key(group_id, username)
+        if db_key in db:
+            return jsonify({"success": False, "error": "User already exists in this group"}), 400
 
         target_node, _ = find_available_node(group_id, 1, current_db=db)
         if not target_node:
@@ -293,7 +294,8 @@ def api_generate_keys():
         existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
         next_id = max(existing_ids) + 1 if existing_ids else 1
 
-        db[username] = {
+        db[db_key] = {
+            "username": username,
             "node": target_node, "group": group_id, "protocol": "out", "uuid": uid,
             "port": port, "total_gb": total_gb, "expire_date": expire_date,
             "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False,
@@ -361,13 +363,13 @@ def webhook_switch():
         
         uid = uinfo.get('uuid')
         port = uinfo.get('port')
-        safe_u = urllib.parse.quote(username)
+        display = get_display_name(username, uinfo)
+        safe_u = urllib.parse.quote(display)
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         proto = uinfo.get('protocol', 'out')
-        
-        # Switch မလုပ်ခင် old node ရဲ့ raw counter delta ကိုသာ ယူ (double count မဖြစ်စေရန်)
-        delta_bytes, _ = collect_usage_delta(old_ip, username, uinfo.get('last_raw_bytes', 0))
+
+        delta_bytes, _ = collect_usage_delta(old_ip, display, uinfo.get('last_raw_bytes', 0))
         if delta_bytes > 0:
             uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + float(delta_bytes)
 
@@ -449,6 +451,7 @@ def api_internal_edit_user():
 
     req_data = request.get_json(force=True, silent=True) or {}
     username = str(req_data.get('username', '')).strip()
+    group_id = str(req_data.get('group', req_data.get('masterGroupId', ''))).strip() or None
     if not username:
         return jsonify({"success": False, "error": "Missing username"}), 400
 
@@ -468,10 +471,11 @@ def api_internal_edit_user():
             return jsonify({"success": False, "error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f:
             db = json.load(f)
-        if username not in db or not isinstance(db.get(username), dict):
+        db_key = find_db_key(db, username, group_id)
+        if not db_key or not isinstance(db.get(db_key), dict):
             return jsonify({"success": False, "error": "User not found"}), 404
 
-        uinfo = db[username]
+        uinfo = db[db_key]
         if total_gb is not None:
             uinfo['total_gb'] = total_gb
         if used_gb is not None:
@@ -500,11 +504,11 @@ def api_internal_edit_user():
         with open(USERS_DB, 'w') as f:
             json.dump(db, f, indent=4)
 
-    # Apply runtime state to nodes immediately.
+    display = get_display_name(db_key, uinfo)
     if uinfo.get('is_blocked', False):
-        apply_user_action_on_nodes(username, uinfo, "suspend")
+        apply_user_action_on_nodes(display, uinfo, "suspend")
     else:
-        apply_user_action_on_nodes(username, uinfo, "resume")
+        apply_user_action_on_nodes(display, uinfo, "resume")
     return jsonify({"success": True, "message": "Action completed successfully"})
 
 @api_bp.route('/api/internal/block-user', methods=['POST', 'OPTIONS'])
@@ -517,6 +521,7 @@ def api_internal_block_user():
 
     req_data = request.get_json(force=True, silent=True) or {}
     username = str(req_data.get('username', '')).strip()
+    group_id = str(req_data.get('group', req_data.get('masterGroupId', ''))).strip() or None
     if not username:
         return jsonify({"success": False, "error": "Missing username"}), 400
 
@@ -525,17 +530,19 @@ def api_internal_block_user():
             return jsonify({"success": False, "error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f:
             db = json.load(f)
-        if username not in db or not isinstance(db.get(username), dict):
+        db_key = find_db_key(db, username, group_id)
+        if not db_key or not isinstance(db.get(db_key), dict):
             return jsonify({"success": False, "error": "User not found"}), 404
 
-        uinfo = db[username]
+        uinfo = db[db_key]
         uinfo['is_blocked'] = True
         uinfo['is_online'] = False
         uinfo['block_enforced'] = False
         with open(USERS_DB, 'w') as f:
             json.dump(db, f, indent=4)
 
-    apply_user_action_on_nodes(username, uinfo, "suspend")
+    display = get_display_name(db_key, uinfo)
+    apply_user_action_on_nodes(display, uinfo, "suspend")
     return jsonify({"success": True, "message": "Action completed successfully"})
 
 @api_bp.route('/api/internal/delete-user', methods=['POST', 'OPTIONS'])
@@ -549,6 +556,7 @@ def api_internal_delete_user():
     req_data = request.get_json(force=True, silent=True) or {}
     username = str(req_data.get('username', '')).strip()
     token = str(req_data.get('token', '')).strip()
+    req_group = str(req_data.get('group', req_data.get('masterGroupId', ''))).strip() or None
 
     with db_lock:
         if not os.path.exists(USERS_DB):
@@ -556,17 +564,21 @@ def api_internal_delete_user():
         with open(USERS_DB, 'r') as f:
             db = json.load(f)
 
-        if not username and token:
-            username = next((u for u, i in db.items() if isinstance(i, dict) and i.get('token') == token), '')
-        if not username or username not in db:
+        db_key = None
+        if token:
+            db_key = next((k for k, i in db.items() if isinstance(i, dict) and i.get('token') == token), None)
+        if not db_key and username:
+            db_key = find_db_key(db, username, req_group)
+        if not db_key or db_key not in db:
             return jsonify({"success": False, "error": "User not found"}), 404
 
-        uinfo = db[username]
+        uinfo = db[db_key]
+        display = get_display_name(db_key, uinfo)
         group_id = uinfo.get('group')
         target_node = uinfo.get('node')
         port = uinfo.get('port')
         proto = uinfo.get('protocol', 'out')
-        del db[username]
+        del db[db_key]
 
         with open(USERS_DB, 'w') as f:
             json.dump(db, f, indent=4)
@@ -578,7 +590,7 @@ def api_internal_delete_user():
         if not nip:
             continue
         nip = str(nip).strip()
-        cmd_del = get_safe_delete_cmd(username, proto, port if proto != 'v2' else '443')
+        cmd_del = get_safe_delete_cmd(display, proto, port if proto != 'v2' else '443')
         if proto == 'v2':
             cmd_full_del = f"{cmd_del} ; systemctl restart xray"
         else:

@@ -1,6 +1,6 @@
 import json, os, uuid, base64, urllib.parse, random, string, threading, requests
 from datetime import datetime, timedelta
-from utils import db_lock, get_all_servers
+from utils import db_lock, get_all_servers, make_db_key, get_display_name, find_db_key
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
 from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cmd
 
@@ -122,7 +122,12 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 if p > max_p_global: max_p_global = p
 
         for u in usernames:
-            if u in db: continue
+            db_key = make_db_key(group_id, u) if is_auto and group_id else u
+            if db_key in db:
+                continue
+            if not group_id and u in db:
+                continue
+
             if is_auto:
                 target_node, target_ip = find_available_node(group_id, 1, current_db=db)
                 if not target_node: return False, "❌ Error: Limit Reached! No space available."
@@ -135,7 +140,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             uid = str(uuid.uuid4()).strip()
             safe_u = urllib.parse.quote(u)
             token = generate_token()
-            
+
             if proto == 'v2':
                 port = "443"
                 k = f"vless://{uid}@{target_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -149,21 +154,21 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
                 cmd = get_safe_add_out_cmd(u, uid, port)
 
-                # Pre-provision for group users: add key to all nodes in group.
                 target_ips = [target_ip]
                 if group_id:
                     target_ips = get_group_node_ips(group_id) or [target_ip]
                 for ip in target_ips:
                     ss_cmds.setdefault(str(ip).strip(), []).append(cmd)
-            
-            db[u] = {
-                "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
-                "port": port, "total_gb": float(gb), "expire_date": exp, 
-                "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, 
+
+            db[db_key] = {
+                "username": u,
+                "node": target_node, "group": group_id, "protocol": proto, "uuid": uid,
+                "port": port, "total_gb": float(gb), "expire_date": exp,
+                "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False,
                 "key": k, "key_id": next_id, "token": token
             }
             next_id += 1
-            
+
             if is_auto and group_id:
                 threading.Thread(target=sync_new_user_to_subpanel, args=(u, group_id, gb, exp, token, uid, port, proto), daemon=True).start()
 
@@ -181,12 +186,13 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             
         return True, "Success"
 
-def toggle_key(username):
+def toggle_key(db_key):
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
-            if username in db:
-                user = db[username]; user['is_blocked'] = not user.get('is_blocked', False)
+            if db_key in db:
+                user = db[db_key]; user['is_blocked'] = not user.get('is_blocked', False)
+                display = get_display_name(db_key, user)
                 ip = get_robust_ip(user.get('node'))
                 if ip:
                     protocol = user.get('protocol', 'v2')
@@ -194,11 +200,10 @@ def toggle_key(username):
                     target_ips = [str(ip).strip()]
                     if protocol == 'out' and group_id:
                         target_ips = get_group_node_ips(group_id) or target_ips
-                    if user['is_blocked']: 
+                    if user['is_blocked']:
                         user['is_online'] = False
-                        cmd = get_safe_delete_cmd(username, protocol, user.get('port', '443'))
+                        cmd = get_safe_delete_cmd(display, protocol, user.get('port', '443'))
                         if protocol == 'out':
-                            # Hard block for SS: remove from all known nodes so no stale node remains connectable.
                             target_ips = []
                             for ninfo in get_all_servers().values():
                                 nip = str(ninfo.get('ip', '')).strip()
@@ -206,8 +211,8 @@ def toggle_key(username):
                                     target_ips.append(nip)
                     else:
                         uid = user['uuid']
-                        cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}" if protocol == 'v2' else get_safe_add_out_cmd(username, uid, user['port'])
-                    
+                        cmd = f"/usr/local/bin/v2ray-node-add-vless {display} {uid}" if protocol == 'v2' else get_safe_add_out_cmd(display, uid, user['port'])
+
                     if protocol == 'v2':
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                     else:
@@ -217,35 +222,37 @@ def toggle_key(username):
                             execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-def edit_key(username, total_gb, expire_date):
+def edit_key(db_key, total_gb, expire_date):
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
-            if username in db:
-                if total_gb is not None: db[username]['total_gb'] = float(total_gb)
-                if expire_date: db[username]['expire_date'] = expire_date
+            if db_key in db:
+                if total_gb is not None: db[db_key]['total_gb'] = float(total_gb)
+                if expire_date: db[db_key]['expire_date'] = expire_date
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-def renew_key(username, add_gb, add_days):
+def renew_key(db_key, add_gb, add_days):
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
-            if username in db:
-                db[username]['total_gb'] = float(add_gb); db[username]['days'] = int(add_days)
-                db[username]['expire_date'] = (datetime.now() + timedelta(days=int(add_days))).strftime("%Y-%m-%d")
-                db[username]['used_bytes'] = 0; db[username]['last_raw_bytes'] = 0; db[username]['is_blocked'] = False; db[username]['is_online'] = False
-                
-                ip = get_robust_ip(db[username].get('node'))
-                group_id = db[username].get('group')
+            if db_key in db:
+                entry = db[db_key]
+                display = get_display_name(db_key, entry)
+                entry['total_gb'] = float(add_gb); entry['days'] = int(add_days)
+                entry['expire_date'] = (datetime.now() + timedelta(days=int(add_days))).strftime("%Y-%m-%d")
+                entry['used_bytes'] = 0; entry['last_raw_bytes'] = 0; entry['is_blocked'] = False; entry['is_online'] = False
+
+                ip = get_robust_ip(entry.get('node'))
+                group_id = entry.get('group')
                 if ip:
-                    uid = db[username]['uuid']
-                    protocol = db[username]['protocol']
-                    port = db[username]['port']
+                    uid = entry['uuid']
+                    protocol = entry['protocol']
+                    port = entry['port']
                     if protocol == 'v2':
-                        cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                        cmd = f"/usr/local/bin/v2ray-node-add-vless {display} {uid}"
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                     else:
-                        cmd = get_safe_add_out_cmd(username, uid, port)
+                        cmd = get_safe_add_out_cmd(display, uid, port)
                         prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                         target_ips = [str(ip).strip()]
@@ -253,19 +260,20 @@ def renew_key(username, add_gb, add_days):
                             target_ips = get_group_node_ips(group_id) or target_ips
                         for tip in target_ips:
                             execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
-                    
+
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-def delete_key(username):
+def delete_key(db_key):
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
-            if username in db:
-                info = db[username]
+            if db_key in db:
+                info = db[db_key]
+                display = get_display_name(db_key, info)
                 ip = get_robust_ip(info.get('node'))
                 protocol = info.get('protocol', 'v2')
                 if ip:
-                    cmd = get_safe_delete_cmd(username, protocol, info.get('port', '443'))
+                    cmd = get_safe_delete_cmd(display, protocol, info.get('port', '443'))
                     if protocol == 'v2':
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                     else:
@@ -277,27 +285,29 @@ def delete_key(username):
                             target_ips = get_group_node_ips(group_id) or target_ips
                         for tip in target_ips:
                             execute_ssh_bg(str(tip).strip(), [prefix + cmd + suffix])
-                del db[username]
+                del db[db_key]
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-def bulk_delete_keys(usernames):
+def bulk_delete_keys(db_keys):
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             vless_dels = {}
             ss_dels = {}
-            for uname in usernames:
-                if uname in db:
-                    ip = get_robust_ip(db[uname].get('node'))
-                    protocol = db[uname].get('protocol', 'v2')
+            for dk in db_keys:
+                if dk in db:
+                    info = db[dk]
+                    display = get_display_name(dk, info)
+                    ip = get_robust_ip(info.get('node'))
+                    protocol = info.get('protocol', 'v2')
                     if ip:
                         ip = str(ip).strip()
-                        cmd = get_safe_delete_cmd(uname, protocol, db[uname].get('port', '443'))
+                        cmd = get_safe_delete_cmd(display, protocol, info.get('port', '443'))
                         if protocol == 'v2':
                             vless_dels.setdefault(ip, []).append(cmd)
                         else:
                             ss_dels.setdefault(ip, []).append(cmd)
-                    del db[uname]
+                    del db[dk]
             with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
             
             for ip, cmds in vless_dels.items():
