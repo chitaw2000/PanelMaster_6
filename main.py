@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, MASTER_API_KEY, load_config, save_config
-from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB, make_db_key, get_display_name, find_db_key
+from utils import get_nodes, get_all_servers, check_live_status, check_live_status_for_node, db_lock, AUTO_GROUPS_FILE, NODES_DB, make_db_key, get_display_name, find_db_key
 from core_auto import load_auto_groups, save_auto_groups
 
 from core_engine import execute_ssh_bg, get_safe_delete_cmd, get_safe_add_out_cmd
@@ -654,7 +654,7 @@ def dashboard():
         limit = gdata.get("limit", 30)
         g_nodes = gdata.get("nodes", {})
         g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
-        g_active = sum(1 for uname, i in db.items() if isinstance(i, dict) and i.get("group") == gid and uname in active_users and not i.get('is_blocked'))
+        g_active = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid and not i.get('is_blocked') and i.get('is_online'))
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         api_domain = gdata.get("api_domain", "")
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "api_domain": api_domain, "node_count": len(g_nodes), "total_keys": g_keys, "active_keys": g_active, "used_gb": g_used_gb})
@@ -952,7 +952,10 @@ def group_view(group_id):
             info['db_key'] = uname
             info['username'] = get_display_name(uname, info)
             info['actual_key'] = info.get('key') or "No Key Found"
-            info['is_active'] = uname in active_users and not info.get('is_blocked')
+            user_node_ip = str(get_target_ip(nid) or "").strip()
+            online_ips = info.get('online_on_ips', [])
+            info['is_active'] = bool(user_node_ip and isinstance(online_ips, list) and user_node_ip in online_ips and not info.get('is_blocked'))
+            info['active_on_node'] = nid if info['is_active'] else ""
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
             
             exp_str = info.get('expire_date')
@@ -1004,7 +1007,13 @@ def group_view(group_id):
         is_alarm = limit_tb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
         
-        active_count = sum(1 for uname, ui in db.items() if isinstance(ui, dict) and ui.get('group') == group_id and ui.get('node') == nid and uname in active_users and not ui.get('is_blocked'))
+        node_ip_for_active = str(get_target_ip(nid) or "").strip()
+        active_count = sum(
+            1 for ui in db.values()
+            if isinstance(ui, dict) and ui.get('group') == group_id and ui.get('node') == nid
+            and not ui.get('is_blocked') and node_ip_for_active
+            and isinstance(ui.get('online_on_ips', []), list) and node_ip_for_active in ui.get('online_on_ips', [])
+        )
 
         server_stats.append({
             "id": nid,
@@ -1445,18 +1454,17 @@ def node_view(node_id):
             
     config = load_config()
     active_users = check_live_status(db)
-    auto_groups = load_auto_groups() # 🚀 Group များကို လှမ်းခေါ်မည်
+    node_active_users = check_live_status_for_node(db, node_ip)
+    auto_groups = load_auto_groups()
     users = []
     node_used_bytes = 0
     current_date_str = datetime.now().strftime("%Y-%m-%d")
-    
+
     db_changed = False
     cmds_to_sync = []
-    
+
     for uname, info in db.items():
-        if not isinstance(info, dict): continue 
-        
-        # 🚀 ညိုကီ လိုချင်သည့်အတိုင်း Group ထဲမှ ဆာဗာတိုင်းတွင် လိုက်ပြရန် စစ်ဆေးခြင်း
+        if not isinstance(info, dict): continue
         user_node = info.get('node')
         user_group = info.get('group')
         
@@ -1503,7 +1511,7 @@ def node_view(node_id):
 
             display_info['actual_key'] = expected_key
 
-            display_info['is_active'] = uname in active_users and not display_info.get('is_blocked')
+            display_info['is_active'] = uname in node_active_users and not display_info.get('is_blocked')
             display_info['protocol_label'] = "VLESS" if display_info.get('protocol') == 'v2' else "Outline SS"
             
             exp_str = display_info.get('expire_date')
@@ -1971,7 +1979,9 @@ def api_node_active_users():
         if nid not in node_data:
             node_data[nid] = {"nodeId": nid, "totalUsers": 0, "activeUsers": 0, "users": []}
         node_data[nid]["totalUsers"] += 1
-        is_active = uname in active_users and not uinfo.get('is_blocked')
+        nip = str((all_servers.get(nid, {}) or {}).get('ip', '')).strip()
+        online_ips = uinfo.get('online_on_ips', [])
+        is_active = bool(nip and isinstance(online_ips, list) and nip in online_ips and not uinfo.get('is_blocked'))
         if is_active:
             node_data[nid]["activeUsers"] += 1
         node_data[nid]["users"].append({

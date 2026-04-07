@@ -388,6 +388,7 @@ def monitor_traffic():
 
                 total_diff = 0.0
                 current_total = 0.0
+                active_ips = []
 
                 for ip in user_ips_map[uname]:
                     current_val = float(ip_totals_map.get(ip, {}).get(display, 0.0))
@@ -397,11 +398,11 @@ def monitor_traffic():
                     if current_val > last_val:
                         diff = current_val - last_val
                     elif current_val < last_val and current_val > 0:
-                        # xray reset/restart case on this node
                         diff = current_val
 
                     if diff > 0:
                         total_diff += diff
+                        active_ips.append(ip)
 
                     last_map[ip] = current_val
                     current_total += current_val
@@ -410,10 +411,15 @@ def monitor_traffic():
                     uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + total_diff
                     db_changed = True
 
-                # Online means user transferred data in this monitor interval.
                 now_online = total_diff > 0
                 if bool(uinfo.get('is_online', False)) != now_online:
                     uinfo['is_online'] = now_online
+                    db_changed = True
+
+                new_active_ips = sorted(active_ips) if active_ips else []
+                old_active_ips = uinfo.get('online_on_ips', [])
+                if new_active_ips != old_active_ips:
+                    uinfo['online_on_ips'] = new_active_ips
                     db_changed = True
 
                 if uinfo.get('last_raw_bytes_map') != last_map:

@@ -52,6 +52,23 @@ def check_live_status(db):
         except: pass
     return active
 
+def check_live_status_for_node(db, node_ip):
+    """Return set of DB keys that are actively transferring data on a specific node IP."""
+    active = set()
+    if not node_ip:
+        return active
+    nip = str(node_ip).strip()
+    for uname, info in db.items():
+        try:
+            if info.get('is_blocked', False):
+                continue
+            online_ips = info.get('online_on_ips', [])
+            if isinstance(online_ips, list) and nip in online_ips:
+                active.add(uname)
+        except:
+            pass
+    return active
+
 
 COMPOSITE_SEP = "::"
 
