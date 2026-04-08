@@ -2664,6 +2664,7 @@ def save_external_sync_settings():
 
     cfg['external_sync_url'] = _normalize_sync_base(raw_url)
     cfg['external_sync_api_key'] = api_key
+    cfg.pop('external_new_server_sync_url', None)
 
     save_config(cfg)
     key_state = "set" if api_key else "empty"
