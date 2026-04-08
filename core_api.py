@@ -598,3 +598,69 @@ def api_internal_delete_user():
         fire_ssh_bg(nip, cmd_full_del)
 
     return jsonify({"success": True, "message": "User deleted"})
+
+
+@api_bp.route('/api/debug/sync-node-stats-preview', methods=['GET'])
+def debug_sync_node_stats_preview():
+    """Show exactly what payload sync-node-stats would send (no auth needed, read-only)."""
+    from core_monitor import _get_sync_targets, _get_sync_api_key, get_target_ip, query_ip_user_totals
+
+    groups = load_auto_groups()
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f:
+                db = json.load(f)
+        else:
+            db = {}
+
+    base_urls = _get_sync_targets()
+    target_url = base_urls[0].rsplit("/", 1)[0] + "/sync-node-stats" if base_urls else "(no base url)"
+    api_key = _get_sync_api_key()
+
+    result = {
+        "target_url": target_url,
+        "api_key_preview": api_key[:12] + "..." if len(api_key) > 12 else api_key,
+        "groups": {}
+    }
+
+    for gid, gdata in groups.items():
+        g_nodes = gdata.get("nodes", {})
+        if not g_nodes:
+            continue
+
+        group_usernames = set()
+        for dk, ui in db.items():
+            if isinstance(ui, dict) and ui.get('group') == gid and not ui.get('is_blocked'):
+                display = get_display_name(dk, ui)
+                if display:
+                    group_usernames.add(display)
+
+        ip_totals = {}
+        node_info = {}
+        for nid in g_nodes:
+            nip = str(get_target_ip(nid) or "").strip()
+            node_info[nid] = {"ip": nip}
+            if nip and nip not in ip_totals:
+                ip_totals[nip] = query_ip_user_totals(nip)
+
+        node_counts = {}
+        for nid in g_nodes:
+            nip = node_info[nid]["ip"]
+            count = 0
+            if nip and nip in ip_totals:
+                stats = ip_totals[nip]
+                for uname in group_usernames:
+                    if float(stats.get(uname, 0) or 0) > 0:
+                        count += 1
+            node_counts[nid] = count
+
+        result["groups"][gid] = {
+            "payload_that_would_be_sent": {
+                "masterGroupId": gid,
+                "nodes": node_counts
+            },
+            "node_details": node_info,
+            "group_users_count": len(group_usernames)
+        }
+
+    return jsonify(result)
