@@ -200,7 +200,7 @@ def query_ip_user_totals(ip):
         print(f"[monitor] SKIP ip={ip} (backoff)")
         return totals
     try:
-        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
+        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@{ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
         if res.returncode != 0 or not res.stdout:
             _mark_ip_result(ip, False)
