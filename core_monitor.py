@@ -287,11 +287,13 @@ def sync_node_stats_to_subpanel(groups, db):
                 continue
 
             node_counts = {}
+            node_ip_map = {}
             for nid in g_nodes:
                 nip = str(get_target_ip(nid) or "").strip()
+                node_ip_map[nid] = nip
                 count = 0
                 if nip:
-                    for ui in db.values():
+                    for dk, ui in db.items():
                         if not isinstance(ui, dict) or ui.get('is_blocked'):
                             continue
                         if ui.get('group') != gid:
@@ -300,6 +302,13 @@ def sync_node_stats_to_subpanel(groups, db):
                         if isinstance(oips, list) and nip in oips:
                             count += 1
                 node_counts[nid] = count
+
+            print(f"[node-stats-sync] DEBUG group={gid} node_ips={node_ip_map}")
+            for dk, ui in db.items():
+                if isinstance(ui, dict) and ui.get('group') == gid and not ui.get('is_blocked'):
+                    oips = ui.get('online_on_ips', [])
+                    if oips:
+                        print(f"[node-stats-sync] DEBUG   user={get_display_name(dk, ui)} online_on_ips={oips}")
 
             payload = {
                 "masterGroupId": gid,
