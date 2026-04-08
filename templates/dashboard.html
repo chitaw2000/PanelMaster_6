@@ -373,8 +373,9 @@
             </h3>
             <form action="/save_external_sync_settings" method="POST" class="space-y-4">
                 <div>
-                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Sync URL</label>
-                    <input type="text" name="external_sync_url" value="{{ config.external_sync_url or '' }}" placeholder="https://your-panel.com/api/internal/sync-user-usage" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300">
+                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">External Panel URL</label>
+                    <input type="text" name="external_sync_url" value="{{ config.external_sync_url or '' }}" placeholder="dash.example.com" class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300">
+                    <p class="text-[9px] text-slate-400 mt-1 ml-1">Domain or full URL — all sync endpoints auto-derive from this</p>
                 </div>
                 <div>
                     <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">x-api-key</label>

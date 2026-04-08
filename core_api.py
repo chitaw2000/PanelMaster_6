@@ -603,7 +603,7 @@ def api_internal_delete_user():
 @api_bp.route('/api/debug/sync-node-stats-preview', methods=['GET'])
 def debug_sync_node_stats_preview():
     """Show exactly what payload sync-node-stats would send (same logic as UI)."""
-    from core_monitor import _get_sync_targets, _get_sync_api_key, get_target_ip
+    from core_monitor import _build_sync_url, _get_sync_api_key, get_target_ip
 
     groups = load_auto_groups()
     with db_lock:
@@ -613,8 +613,7 @@ def debug_sync_node_stats_preview():
         else:
             db = {}
 
-    base_urls = _get_sync_targets()
-    target_url = base_urls[0].rsplit("/", 1)[0] + "/sync-node-stats" if base_urls else "(no base url)"
+    target_url = _build_sync_url("sync-node-stats") or "(no base url)"
     api_key = _get_sync_api_key()
 
     result = {

@@ -47,16 +47,40 @@ def _parse_monitor_interval(raw_interval):
     return val
 
 
-def _get_sync_targets():
+def _normalize_sync_base(raw):
+    """Turn any input (domain, full URL, etc.) into a clean base like https://dash.example.com"""
+    raw = str(raw or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    for suffix in ["/api/internal/sync-user-usage", "/api/internal/sync-node-stats",
+                   "/api/internal/sync-new-server", "/api/internal", "/api"]:
+        if raw.lower().endswith(suffix):
+            raw = raw[:-len(suffix)]
+            break
+    raw = raw.rstrip("/")
+    if raw and not raw.startswith("http"):
+        raw = "https://" + raw
+    return raw
+
+
+def _get_sync_base_url():
     cfg = {}
     try:
         cfg = load_config() or {}
     except Exception:
         cfg = {}
-    primary = str(cfg.get("external_sync_url", "")).strip()
-    if not primary:
-        primary = str(os.environ.get("PANEL_SYNC_PRIMARY_URL", "")).strip()
-    return [primary] if primary else []
+    raw = str(cfg.get("external_sync_url", "")).strip()
+    if not raw:
+        raw = str(os.environ.get("PANEL_SYNC_PRIMARY_URL", "")).strip()
+    return _normalize_sync_base(raw)
+
+
+def _build_sync_url(endpoint):
+    """Build full sync URL for a given endpoint name (e.g. 'sync-user-usage')."""
+    base = _get_sync_base_url()
+    if not base:
+        return ""
+    return f"{base}/api/internal/{endpoint}"
 
 
 def _get_sync_api_key():
@@ -242,14 +266,14 @@ def sync_usage_to_subpanel(db_key, uinfo, node_active_count=0):
         }
 
         api_key = _get_sync_api_key()
-        urls = _get_sync_targets()
-        if not urls or not api_key:
-            print(f"[usage-sync] SKIP user={username} reason={'no sync URL' if not urls else 'no API key'} — set in Dashboard Settings")
+        url = _build_sync_url("sync-user-usage")
+        if not url or not api_key:
+            print(f"[usage-sync] SKIP user={username} reason={'no sync URL' if not url else 'no API key'} — set in Dashboard Settings")
             return
 
         headers = {"Content-Type": "application/json", "x-api-key": api_key}
         delivered = False
-        for url in urls:
+        for url in [url]:
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=6)
                 body_preview = (r.text or "").strip().replace("\n", " ")[:240]
@@ -276,8 +300,8 @@ def sync_node_stats_to_subpanel(groups, db):
     """Push per-group node active user counts to external panel (same as UI)."""
     try:
         api_key = _get_sync_api_key()
-        base_urls = _get_sync_targets()
-        if not base_urls or not api_key:
+        url = _build_sync_url("sync-node-stats")
+        if not url or not api_key:
             return
         headers = {"Content-Type": "application/json", "x-api-key": api_key}
 
@@ -315,20 +339,12 @@ def sync_node_stats_to_subpanel(groups, db):
                 "nodes": node_counts
             }
 
-            delivered = False
-            for base_url in base_urls:
-                url = base_url.rsplit("/", 1)[0] + "/sync-node-stats"
-                try:
-                    r = requests.post(url, json=payload, headers=headers, timeout=6)
-                    body = (r.text or "").strip()[:200]
-                    print(f"[node-stats-sync] group={gid} url={url} status={r.status_code} body={body} nodes={node_counts}")
-                    if 200 <= r.status_code < 300:
-                        delivered = True
-                        break
-                except Exception as ex:
-                    print(f"[node-stats-sync] group={gid} url={url} error={ex}")
-            if not delivered:
-                print(f"[node-stats-sync] group={gid} FAILED all targets")
+            try:
+                r = requests.post(url, json=payload, headers=headers, timeout=6)
+                body = (r.text or "").strip()[:200]
+                print(f"[node-stats-sync] group={gid} url={url} status={r.status_code} body={body} nodes={node_counts}")
+            except Exception as ex:
+                print(f"[node-stats-sync] group={gid} url={url} error={ex}")
     except Exception as e:
         print(f"[node-stats-sync] error: {e}")
 

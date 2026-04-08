@@ -1096,18 +1096,14 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
             "userKeys": user_keys
         }
         
-        cfg = load_config() or {}
-        sync_key = str(cfg.get("external_sync_api_key", "")).strip()
-        if not sync_key:
-            sync_key = str(os.environ.get("PANEL_SYNC_API_KEY", "")).strip()
-        gb_sync_url = str(cfg.get("external_sync_url", "")).strip()
-        if gb_sync_url:
-            base = gb_sync_url.rsplit("/", 1)[0]
-            primary_url = f"{base}/sync-new-server"
-        else:
-            primary_url = str(os.environ.get("PANEL_SYNC_NEW_SERVER_URL", "")).strip()
+        from core_monitor import _build_sync_url, _get_sync_api_key
+        sync_key = _get_sync_api_key()
+        primary_url = _build_sync_url("sync-new-server")
+        if not primary_url or not sync_key:
+            print(f"[sync-new-server] SKIP — no sync URL or API key configured")
+            return
         headers = {"Content-Type": "application/json", "x-api-key": sync_key}
-        urls = [primary_url] if primary_url else []
+        urls = [primary_url]
         delivered = False
         for url in urls:
             try:
@@ -2661,16 +2657,17 @@ def save_backup_bot_settings():
 
 @app.route('/save_external_sync_settings', methods=['POST'])
 def save_external_sync_settings():
+    from core_monitor import _normalize_sync_base
     cfg = load_config()
-    url = str(request.form.get('external_sync_url', '')).strip()
+    raw_url = str(request.form.get('external_sync_url', '')).strip()
     api_key = str(request.form.get('external_sync_api_key', '')).strip()
 
-    cfg['external_sync_url'] = url
+    cfg['external_sync_url'] = _normalize_sync_base(raw_url)
     cfg['external_sync_api_key'] = api_key
 
     save_config(cfg)
-    key_state = "set" if str(cfg.get('external_sync_api_key', '')).strip() else "empty"
-    log_activity("Save External Sync Settings", f"url={url} api_key={key_state}", "info")
+    key_state = "set" if api_key else "empty"
+    log_activity("Save External Sync Settings", f"url={cfg['external_sync_url']} api_key={key_state}", "info")
     return redirect(url_for('dashboard'))
 
 
