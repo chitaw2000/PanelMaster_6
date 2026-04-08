@@ -221,7 +221,7 @@ def query_ip_user_totals(ip):
         _mark_ip_result(ip, False)
     return totals
 
-def sync_usage_to_subpanel(db_key, uinfo):
+def sync_usage_to_subpanel(db_key, uinfo, node_active_count=0):
     try:
         username = get_display_name(db_key, uinfo)
         now_ts = int(time.time())
@@ -230,6 +230,7 @@ def sync_usage_to_subpanel(db_key, uinfo):
         total_gb = float(uinfo.get('total_gb', 0) or 0)
         used_gb = used_bytes / (1024 ** 3)
         remaining_gb = max(total_gb - used_gb, 0.0)
+        online_ips = uinfo.get('online_on_ips', [])
 
         payload = {
             "name": username,
@@ -240,7 +241,9 @@ def sync_usage_to_subpanel(db_key, uinfo):
             "isBlocked": bool(uinfo.get('is_blocked', False)),
             "isActive": bool(uinfo.get('is_online', False)) and not bool(uinfo.get('is_blocked', False)),
             "node": uinfo.get('node', ''),
-            "group": uinfo.get('group', '')
+            "group": uinfo.get('group', ''),
+            "activeOnIps": online_ips if isinstance(online_ips, list) else [],
+            "nodeActiveUsers": int(node_active_count)
         }
 
         headers = {"Content-Type": "application/json", "x-api-key": _get_sync_api_key()}
@@ -431,7 +434,6 @@ def monitor_traffic():
                     uinfo['last_raw_bytes'] = current_total
                     db_changed = True
 
-                # Throttled usage sync to external panel.
                 if total_diff > 0:
                     now_ts = int(time.time())
                     last_sync_at = int(uinfo.get('last_usage_sync_at', 0) or 0)
@@ -439,7 +441,16 @@ def monitor_traffic():
                     current_used = float(uinfo.get('used_bytes', 0) or 0)
                     delta_since_last_sync = max(current_used - last_sync_bytes, 0.0)
                     if (now_ts - last_sync_at) >= 30 or delta_since_last_sync >= (50 * 1024 * 1024):
-                        sync_usage_to_subpanel(uname, uinfo)
+                        user_node_ip = str(get_target_ip(uinfo.get('node')) or "").strip()
+                        nac = 0
+                        if user_node_ip:
+                            for _u, _ui in db.items():
+                                if not isinstance(_ui, dict) or _ui.get('is_blocked'):
+                                    continue
+                                _oips = _ui.get('online_on_ips', [])
+                                if isinstance(_oips, list) and user_node_ip in _oips:
+                                    nac += 1
+                        sync_usage_to_subpanel(uname, uinfo, node_active_count=nac)
                         uinfo['last_usage_sync_at'] = now_ts
                         uinfo['last_sync_used_bytes'] = current_used
                         db_changed = True
