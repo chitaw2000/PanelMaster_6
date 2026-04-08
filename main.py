@@ -1099,19 +1099,13 @@ def sync_new_node_to_subpanel(group_id, new_node_id, new_node_ip):
         cfg = load_config() or {}
         sync_key = str(cfg.get("external_sync_api_key", "")).strip()
         if not sync_key:
-            sync_key = str(os.environ.get("PANEL_SYNC_API_KEY", "pmk_XI1fBk3DEEekIDwgngJWQmjFXR0TziWkzw9UvmNB_Uk")).strip()
-        # Derive sync-new-server URL from the same base as GB sync URL in settings.
+            sync_key = str(os.environ.get("PANEL_SYNC_API_KEY", "")).strip()
         gb_sync_url = str(cfg.get("external_sync_url", "")).strip()
         if gb_sync_url:
             base = gb_sync_url.rsplit("/", 1)[0]
             primary_url = f"{base}/sync-new-server"
         else:
-            primary_url = str(
-                os.environ.get(
-                    "PANEL_SYNC_NEW_SERVER_URL",
-                    "https://dash1.dabazinme.me/api/internal/sync-new-server"
-                )
-            ).strip()
+            primary_url = str(os.environ.get("PANEL_SYNC_NEW_SERVER_URL", "")).strip()
         headers = {"Content-Type": "application/json", "x-api-key": sync_key}
         urls = [primary_url] if primary_url else []
         delivered = False
@@ -2671,11 +2665,8 @@ def save_external_sync_settings():
     url = str(request.form.get('external_sync_url', '')).strip()
     api_key = str(request.form.get('external_sync_api_key', '')).strip()
 
-    if not url:
-        url = "https://dash1.dabazinme.me/api/internal/sync-user-usage"
     cfg['external_sync_url'] = url
-    if api_key:
-        cfg['external_sync_api_key'] = api_key
+    cfg['external_sync_api_key'] = api_key
 
     save_config(cfg)
     key_state = "set" if str(cfg.get('external_sync_api_key', '')).strip() else "empty"

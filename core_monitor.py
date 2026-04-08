@@ -55,17 +55,11 @@ def _get_sync_targets():
         cfg = {}
     primary = str(cfg.get("external_sync_url", "")).strip()
     if not primary:
-        primary = str(
-            os.environ.get(
-                "PANEL_SYNC_PRIMARY_URL",
-                "https://dash1.dabazinme.me/api/internal/sync-user-usage"
-            )
-        ).strip()
+        primary = str(os.environ.get("PANEL_SYNC_PRIMARY_URL", "")).strip()
     return [primary] if primary else []
 
 
 def _get_sync_api_key():
-    # Prefer panel config value so operator can rotate from dashboard.
     cfg = {}
     try:
         cfg = load_config() or {}
@@ -74,12 +68,7 @@ def _get_sync_api_key():
     key = str(cfg.get("external_sync_api_key", "")).strip()
     if key:
         return key
-    return str(
-        os.environ.get(
-            "PANEL_SYNC_API_KEY",
-            "pmk_XI1fBk3DEEekIDwgngJWQmjFXR0TziWkzw9UvmNB_Uk"
-        )
-    ).strip()
+    return str(os.environ.get("PANEL_SYNC_API_KEY", "")).strip()
 
 
 def _skip_ip_temporarily(ip):
@@ -252,9 +241,13 @@ def sync_usage_to_subpanel(db_key, uinfo, node_active_count=0):
             "nodeActiveUsers": int(node_active_count)
         }
 
-        headers = {"Content-Type": "application/json", "x-api-key": _get_sync_api_key()}
+        api_key = _get_sync_api_key()
         urls = _get_sync_targets()
+        if not urls or not api_key:
+            print(f"[usage-sync] SKIP user={username} reason={'no sync URL' if not urls else 'no API key'} — set in Dashboard Settings")
+            return
 
+        headers = {"Content-Type": "application/json", "x-api-key": api_key}
         delivered = False
         for url in urls:
             try:
@@ -282,10 +275,11 @@ def sync_usage_to_subpanel(db_key, uinfo, node_active_count=0):
 def sync_node_stats_to_subpanel(groups, db):
     """Push per-group node active user counts to external panel (same as UI)."""
     try:
-        headers = {"Content-Type": "application/json", "x-api-key": _get_sync_api_key()}
+        api_key = _get_sync_api_key()
         base_urls = _get_sync_targets()
-        if not base_urls:
+        if not base_urls or not api_key:
             return
+        headers = {"Content-Type": "application/json", "x-api-key": api_key}
 
         for gid, gdata in groups.items():
             g_nodes = gdata.get("nodes", {})
