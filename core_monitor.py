@@ -197,12 +197,14 @@ def query_ip_user_totals(ip):
     if not ip:
         return totals
     if _skip_ip_temporarily(ip):
+        print(f"[monitor] SKIP ip={ip} (backoff)")
         return totals
     try:
         cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
         if res.returncode != 0 or not res.stdout:
             _mark_ip_result(ip, False)
+            print(f"[monitor] FAIL ip={ip} rc={res.returncode} stdout_len={len(res.stdout or '')} stderr={( res.stderr or '')[:120]}")
             return totals
 
         stats = json.loads(res.stdout).get("stat", [])
@@ -216,8 +218,9 @@ def query_ip_user_totals(ip):
                 uname = str(p[1])[4:]
                 totals[uname] = totals.get(uname, 0.0) + val
         _mark_ip_result(ip, True)
-    except Exception:
+    except Exception as ex:
         _mark_ip_result(ip, False)
+        print(f"[monitor] EXCEPTION ip={ip} error={ex}")
     return totals
 
 def sync_usage_to_subpanel(db_key, uinfo, node_active_count=0):
