@@ -1010,7 +1010,7 @@ def group_view(group_id):
         node_ip_for_active = str(get_target_ip(nid) or "").strip()
         active_count = sum(
             1 for ui in db.values()
-            if isinstance(ui, dict) and ui.get('group') == group_id and ui.get('node') == nid
+            if isinstance(ui, dict) and ui.get('group') == group_id
             and not ui.get('is_blocked') and node_ip_for_active
             and isinstance(ui.get('online_on_ips', []), list) and node_ip_for_active in ui.get('online_on_ips', [])
         )
