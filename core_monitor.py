@@ -99,8 +99,7 @@ def _mark_ip_result(ip, ok):
             return
         rec = _IP_FAIL_CACHE.get(ip, {"fails": 0, "retry_at": 0.0})
         fails = int(rec.get("fails", 0)) + 1
-        # Exponential backoff up to 10 minutes for dead/inactive nodes.
-        backoff = min(600, 10 * (2 ** min(fails, 6)))
+        backoff = min(30, 10 * min(fails, 3))
         _IP_FAIL_CACHE[ip] = {"fails": fails, "retry_at": now + backoff}
 
 def get_target_ip(node_id):
@@ -481,9 +480,18 @@ def monitor_traffic():
 
                 new_active_ips = sorted(active_ips) if active_ips else []
                 old_active_ips = uinfo.get('online_on_ips', [])
-                if new_active_ips != old_active_ips:
-                    uinfo['online_on_ips'] = new_active_ips
-                    db_changed = True
+                if new_active_ips:
+                    if new_active_ips != old_active_ips:
+                        uinfo['online_on_ips'] = new_active_ips
+                        uinfo['_online_ips_seen_at'] = int(time.time())
+                        db_changed = True
+                else:
+                    last_seen = int(uinfo.get('_online_ips_seen_at', 0) or 0)
+                    if old_active_ips and (int(time.time()) - last_seen) < 60:
+                        pass
+                    elif old_active_ips:
+                        uinfo['online_on_ips'] = []
+                        db_changed = True
 
                 if uinfo.get('last_raw_bytes_map') != last_map:
                     uinfo['last_raw_bytes_map'] = last_map
