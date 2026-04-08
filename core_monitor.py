@@ -273,36 +273,31 @@ def sync_usage_to_subpanel(db_key, uinfo, node_active_count=0):
         _set_monitor_status(last_sync_status="exception", last_sync_user=str(username))
         print(f"[usage-sync] user={username} result=exception")
 
-def sync_node_stats_to_subpanel(groups, db, ip_totals_map=None):
-    """Push per-group node active user counts to external panel."""
+def sync_node_stats_to_subpanel(groups, db):
+    """Push per-group node active user counts to external panel (same as UI)."""
     try:
         headers = {"Content-Type": "application/json", "x-api-key": _get_sync_api_key()}
         base_urls = _get_sync_targets()
         if not base_urls:
             return
-        if not ip_totals_map:
-            ip_totals_map = {}
 
         for gid, gdata in groups.items():
             g_nodes = gdata.get("nodes", {})
             if not g_nodes:
                 continue
 
-            group_usernames = set()
-            for dk, ui in db.items():
-                if isinstance(ui, dict) and ui.get('group') == gid and not ui.get('is_blocked'):
-                    display = get_display_name(dk, ui)
-                    if display:
-                        group_usernames.add(display)
-
             node_counts = {}
             for nid in g_nodes:
                 nip = str(get_target_ip(nid) or "").strip()
                 count = 0
-                if nip and nip in ip_totals_map:
-                    node_stats = ip_totals_map[nip]
-                    for uname in group_usernames:
-                        if float(node_stats.get(uname, 0) or 0) > 0:
+                if nip:
+                    for ui in db.values():
+                        if not isinstance(ui, dict) or ui.get('is_blocked'):
+                            continue
+                        if ui.get('group') != gid:
+                            continue
+                        oips = ui.get('online_on_ips', [])
+                        if isinstance(oips, list) and nip in oips:
                             count += 1
                 node_counts[nid] = count
 
@@ -536,7 +531,7 @@ def monitor_traffic():
             now_ts = int(time.time())
             last_node_sync = int(_monitor_status.get("last_node_stats_sync_at", 0) or 0)
             if (now_ts - last_node_sync) >= 30:
-                threading.Thread(target=sync_node_stats_to_subpanel, args=(groups, db, ip_totals_map), daemon=True).start()
+                threading.Thread(target=sync_node_stats_to_subpanel, args=(groups, db), daemon=True).start()
                 _monitor_status["last_node_stats_sync_at"] = now_ts
 
         except Exception as e:

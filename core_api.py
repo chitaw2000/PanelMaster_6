@@ -602,8 +602,8 @@ def api_internal_delete_user():
 
 @api_bp.route('/api/debug/sync-node-stats-preview', methods=['GET'])
 def debug_sync_node_stats_preview():
-    """Show exactly what payload sync-node-stats would send (no auth needed, read-only)."""
-    from core_monitor import _get_sync_targets, _get_sync_api_key, get_target_ip, query_ip_user_totals
+    """Show exactly what payload sync-node-stats would send (same logic as UI)."""
+    from core_monitor import _get_sync_targets, _get_sync_api_key, get_target_ip
 
     groups = load_auto_groups()
     with db_lock:
@@ -628,29 +628,20 @@ def debug_sync_node_stats_preview():
         if not g_nodes:
             continue
 
-        group_usernames = set()
-        for dk, ui in db.items():
-            if isinstance(ui, dict) and ui.get('group') == gid and not ui.get('is_blocked'):
-                display = get_display_name(dk, ui)
-                if display:
-                    group_usernames.add(display)
-
-        ip_totals = {}
         node_info = {}
+        node_counts = {}
         for nid in g_nodes:
             nip = str(get_target_ip(nid) or "").strip()
             node_info[nid] = {"ip": nip}
-            if nip and nip not in ip_totals:
-                ip_totals[nip] = query_ip_user_totals(nip)
-
-        node_counts = {}
-        for nid in g_nodes:
-            nip = node_info[nid]["ip"]
             count = 0
-            if nip and nip in ip_totals:
-                stats = ip_totals[nip]
-                for uname in group_usernames:
-                    if float(stats.get(uname, 0) or 0) > 0:
+            if nip:
+                for ui in db.values():
+                    if not isinstance(ui, dict) or ui.get('is_blocked'):
+                        continue
+                    if ui.get('group') != gid:
+                        continue
+                    oips = ui.get('online_on_ips', [])
+                    if isinstance(oips, list) and nip in oips:
                         count += 1
             node_counts[nid] = count
 
@@ -659,8 +650,7 @@ def debug_sync_node_stats_preview():
                 "masterGroupId": gid,
                 "nodes": node_counts
             },
-            "node_details": node_info,
-            "group_users_count": len(group_usernames)
+            "node_details": node_info
         }
 
     return jsonify(result)
