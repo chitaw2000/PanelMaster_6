@@ -214,9 +214,13 @@ def query_ip_user_totals(ip):
             if len(p) >= 4 and p[0] == "user":
                 uname = p[1]
                 totals[uname] = totals.get(uname, 0.0) + val
+                if "::" in uname:
+                    totals[uname.split("::", 1)[1]] = totals.get(uname.split("::", 1)[1], 0.0) + val
             elif len(p) >= 4 and p[0] == "inbound" and str(p[1]).startswith("out-"):
                 uname = str(p[1])[4:]
                 totals[uname] = totals.get(uname, 0.0) + val
+                if "::" in uname:
+                    totals[uname.split("::", 1)[1]] = totals.get(uname.split("::", 1)[1], 0.0) + val
         _mark_ip_result(ip, True)
     except Exception as ex:
         _mark_ip_result(ip, False)
