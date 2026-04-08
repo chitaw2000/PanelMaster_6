@@ -381,6 +381,29 @@
                     <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">x-api-key</label>
                     <input type="text" name="external_sync_api_key" value="{{ config.external_sync_api_key or '' }}" placeholder="pmk_xxx..." class="w-full bg-white border border-slate-200 p-3 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300">
                 </div>
+                {% if config.external_sync_url %}
+                <div class="bg-white border border-indigo-100 rounded-xl p-3 space-y-1.5">
+                    <p class="text-[9px] font-black text-indigo-500 uppercase tracking-widest mb-2">Active Sync Endpoints</p>
+                    <div class="flex items-center gap-2">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full {{ 'bg-green-400' if config.external_sync_api_key else 'bg-red-400' }}"></span>
+                        <span class="text-[10px] font-bold text-slate-500">GB Sync</span>
+                        <span class="text-[10px] font-mono text-slate-400 truncate">{{ config.external_sync_url }}/api/internal/sync-user-usage</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full {{ 'bg-green-400' if config.external_sync_api_key else 'bg-red-400' }}"></span>
+                        <span class="text-[10px] font-bold text-slate-500">Active Users</span>
+                        <span class="text-[10px] font-mono text-slate-400 truncate">{{ config.external_sync_url }}/api/internal/sync-node-stats</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full {{ 'bg-green-400' if config.external_sync_api_key else 'bg-red-400' }}"></span>
+                        <span class="text-[10px] font-bold text-slate-500">New Server</span>
+                        <span class="text-[10px] font-mono text-slate-400 truncate">{{ config.external_sync_url }}/api/internal/sync-new-server</span>
+                    </div>
+                    {% if not config.external_sync_api_key %}
+                    <p class="text-[9px] text-red-500 font-bold mt-1"><i class="fa-solid fa-triangle-exclamation"></i> API key not set — sync is disabled</p>
+                    {% endif %}
+                </div>
+                {% endif %}
                 <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md shadow-indigo-200 transition">
                     Save External Sync Settings
                 </button>
