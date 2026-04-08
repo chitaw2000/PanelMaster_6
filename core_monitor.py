@@ -273,6 +273,52 @@ def sync_usage_to_subpanel(db_key, uinfo, node_active_count=0):
         _set_monitor_status(last_sync_status="exception", last_sync_user=str(username))
         print(f"[usage-sync] user={username} result=exception")
 
+def sync_node_stats_to_subpanel(groups, db):
+    """Push per-group node active user counts to external panel."""
+    try:
+        headers = {"Content-Type": "application/json", "x-api-key": _get_sync_api_key()}
+        base_urls = _get_sync_targets()
+        if not base_urls:
+            return
+
+        for gid, gdata in groups.items():
+            g_nodes = gdata.get("nodes", {})
+            if not g_nodes:
+                continue
+
+            node_counts = {}
+            for nid in g_nodes:
+                nip = str(get_target_ip(nid) or "").strip()
+                count = 0
+                if nip:
+                    for ui in db.values():
+                        if not isinstance(ui, dict) or ui.get('is_blocked'):
+                            continue
+                        if ui.get('group') != gid:
+                            continue
+                        oips = ui.get('online_on_ips', [])
+                        if isinstance(oips, list) and nip in oips:
+                            count += 1
+                node_counts[nid] = count
+
+            payload = {
+                "masterGroupId": gid,
+                "nodes": node_counts
+            }
+
+            for base_url in base_urls:
+                url = base_url.rsplit("/", 1)[0] + "/sync-node-stats"
+                try:
+                    r = requests.post(url, json=payload, headers=headers, timeout=6)
+                    if 200 <= r.status_code < 300:
+                        print(f"[node-stats-sync] group={gid} url={url} status={r.status_code} nodes={node_counts}")
+                        break
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[node-stats-sync] error: {e}")
+
+
 def get_user_monitor_ips(uinfo, groups, monitor_skip_nodes=None):
     ips = []
     group_id = uinfo.get('group')
@@ -476,7 +522,13 @@ def monitor_traffic():
                         if uname in current_db:
                             current_db[uname].update(uinfo)
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
-                    
+
+            now_ts = int(time.time())
+            last_node_sync = int(_monitor_status.get("last_node_stats_sync_at", 0) or 0)
+            if (now_ts - last_node_sync) >= 30:
+                threading.Thread(target=sync_node_stats_to_subpanel, args=(groups, db), daemon=True).start()
+                _monitor_status["last_node_stats_sync_at"] = now_ts
+
         except Exception as e:
             _set_monitor_status(last_error=str(e)[:300])
             print(f"[monitor] loop error: {e}")
