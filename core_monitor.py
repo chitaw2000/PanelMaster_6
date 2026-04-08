@@ -549,10 +549,10 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
 
             now_ts = int(time.time())
-            last_node_sync = int(_monitor_status.get("last_node_stats_sync_at", 0) or 0)
+            last_node_sync = int(_MONITOR_STATUS.get("last_node_stats_sync_at", 0) or 0)
             if (now_ts - last_node_sync) >= 30:
                 threading.Thread(target=sync_node_stats_to_subpanel, args=(groups, db), daemon=True).start()
-                _monitor_status["last_node_stats_sync_at"] = now_ts
+                _MONITOR_STATUS["last_node_stats_sync_at"] = now_ts
 
         except Exception as e:
             _set_monitor_status(last_error=str(e)[:300])
